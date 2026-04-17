@@ -1,0 +1,62 @@
+@import url("https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cormorant+Garamond:wght@300;400;500;600&family=Scheherazade+New:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: #020308;
+  color: #f5f3ee;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Cormorant Garamond", serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.arabic {
+  font-family: "Amiri Quran", "Scheherazade New", serif;
+  direction: rtl;
+  line-height: 1.9;
+}
+
+.font-serif-fine {
+  font-family: "Cormorant Garamond", serif;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+}
+
+.glow-thin {
+  box-shadow: 0 0 24px rgba(200, 200, 255, 0.2);
+}
+
+/* Cosmic background glow */
+.cosmos-bg {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(110,140,255,0.08), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 50% 100%, rgba(255,179,71,0.05), transparent 70%),
+    #020308;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
+
+@keyframes fade-slow {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.fade-slow { animation: fade-slow 2s ease-out both; }
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1.0; }
+}
+.breathe { animation: breathe 4s ease-in-out infinite; }

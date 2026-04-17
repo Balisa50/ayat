@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+.env
+.env.local
+.vercel
+*.log
+.DS_Store
+
+# Pipeline artefacts (re-generate by running the pipeline)
+pipeline/data/embeddings.npy
+pipeline/data/raw_verses.json
+pipeline/data/verses_with_coords.json
+__pycache__/
+*.pyc
+pipeline/*_log.txt
