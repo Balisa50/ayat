@@ -323,6 +323,10 @@ export function VerseCard({
         skipAudioResetRef.current = true;
         audioRef.current = nextAudio;
 
+        // Update chainVerseRef IMMEDIATELY so triggerPrefetch (RAF loop)
+        // always reads the current verse even before React effects commit.
+        chainVerseRef.current = nextV;
+
         // Visual: text fades out for 300ms, content swaps while invisible
         setTextVisible(false);
 
@@ -342,7 +346,10 @@ export function VerseCard({
         // Start playback — stays "playing" with no gap
         nextAudio.play()
           .then(() => setPlaying(true))
-          .catch(() => setPlaying(false));
+          .catch(() => {
+            // play() rejected (rare on mobile) — retry once then give up
+            setTimeout(() => nextAudio.play().then(() => setPlaying(true)).catch(() => setPlaying(false)), 80);
+          });
 
         // Text fades back in once content has swapped (~one render later)
         setTimeout(() => setTextVisible(true), 300);
@@ -502,10 +509,11 @@ export function VerseCard({
   const handleShareVideo = async () => {
     if (!verse || !audioUrl || recording) return;
     setRecording(true);
-    setVideoStatus("Loading fonts…");
+    setVideoStatus("Starting…");
     try {
-      await ensureArabicFontsLoaded();
-      setVideoStatus("Preparing…");
+      // Font loading and everything else happens inside recordVerseVideo.
+      // Do NOT await anything here before calling it — we need to reach
+      // AudioContext creation while the user-activation context is still alive.
       const blob = await recordVerseVideo({ verse, words, audioUrl, segments, onStatus: setVideoStatus });
       setVideoStatus("Processing…");
       await new Promise((r) => setTimeout(r, 400));
@@ -854,33 +862,59 @@ let _activeStream: MediaStream | null = null;
 let _activeRecorder: MediaRecorder | null = null;
 
 async function recordVerseVideo({ verse, words, audioUrl, segments, onStatus }: RecordArgs): Promise<Blob> {
-  if (typeof MediaRecorder === "undefined") throw new Error("MediaRecorder unsupported.");
-  onStatus("Resetting…");
+  if (typeof MediaRecorder === "undefined") throw new Error("MediaRecorder not supported in this browser.");
+
+  // ── Nuclear reset — synchronous so we stay inside the user-gesture activation window.
+  // Awaiting a setTimeout here would expire the activation, causing audio.play() to be
+  // blocked by autoplay policy (NotAllowedError). We just kick off closes without awaiting.
   try { _activeRecorder?.stop(); } catch {}
   _activeRecorder = null;
   if (_activeStream) { for (const t of _activeStream.getTracks()) { try { t.stop(); } catch {} } _activeStream = null; }
-  if (_activeAudioCtx) { try { await _activeAudioCtx.close(); } catch {} _activeAudioCtx = null; }
-  await new Promise((r) => setTimeout(r, 300));
+  if (_activeAudioCtx) { _activeAudioCtx.close().catch(() => {}); _activeAudioCtx = null; }
+
+  // ── Canvas setup ─────────────────────────────────────────────────────────
   const W = 1080, H = 1920;
   const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext("2d", { alpha: false })!;
-  if (!ctx) throw new Error("canvas 2d unavailable");
+  if (!ctx) throw new Error("Canvas 2d unavailable.");
+
+  // ── Audio element ─────────────────────────────────────────────────────────
   const audio = new Audio(); audio.crossOrigin = "anonymous"; audio.preload = "auto"; audio.src = audioUrl;
+
+  // ── AudioContext — created synchronously while still in user-activation context ──
   type ACtor = typeof AudioContext;
   const ww = window as unknown as { AudioContext?: ACtor; webkitAudioContext?: ACtor };
   const Ctor = ww.AudioContext ?? ww.webkitAudioContext;
-  if (!Ctor) throw new Error("AudioContext unsupported");
-  const audioCtx = new Ctor(); _activeAudioCtx = audioCtx;
+  if (!Ctor) throw new Error("AudioContext not supported.");
+  const audioCtx = new Ctor();
+  _activeAudioCtx = audioCtx;
+
+  // Resume AudioContext NOW (still in user-activation context) without awaiting.
+  // By the time we call recorder.start() / audio.play(), the resume will have completed.
+  audioCtx.resume().catch(() => {});
+
   const source = audioCtx.createMediaElementSource(audio);
-  const dest = audioCtx.createMediaStreamDestination();
-  source.connect(dest); source.connect(audioCtx.destination);
-  const canvasStream = canvas.captureStream(30); _activeStream = canvasStream;
+  const dest   = audioCtx.createMediaStreamDestination();
+  source.connect(dest);
+  source.connect(audioCtx.destination);
+
+  // ── Canvas stream + MediaRecorder ─────────────────────────────────────────
+  if (typeof (canvas as HTMLCanvasElement & { captureStream?: () => MediaStream }).captureStream !== "function") {
+    throw new Error("canvas.captureStream() not supported. Try a different browser.");
+  }
+  const canvasStream = canvas.captureStream(30);
+  _activeStream = canvasStream;
   for (const t of dest.stream.getAudioTracks()) canvasStream.addTrack(t);
+
   const mimeType = ["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/mp4;codecs=h264,aac","video/mp4","video/webm"]
     .find((m) => MediaRecorder.isTypeSupported?.(m)) ?? "video/webm";
   const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 192_000 });
   _activeRecorder = recorder;
   const chunks: Blob[] = [];
+
+  // ── Font loading — safe to await now (AudioContext already resumed above) ──
+  onStatus("Preparing…");
+  await ensureArabicFontsLoaded();
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
   type P = { x: number; y: number; r: number; speed: number; phase: number; alpha: number };
   const particles: P[] = Array.from({ length: 120 }, () => ({ x: Math.random()*W, y: Math.random()*H, r: 0.6+Math.random()*2, speed: 4+Math.random()*12, phase: Math.random()*Math.PI*2, alpha: 0.15+Math.random()*0.65 }));
@@ -942,7 +976,8 @@ async function recordVerseVideo({ verse, words, audioUrl, segments, onStatus }: 
     ctx.textAlign="right"; ctx.textBaseline="alphabetic"; ctx.fillStyle="rgba(255,255,255,0.55)"; ctx.font=`500 22px ${EF}`;
     ctx.fillText("AYAT",W-M,H-M);
   }
-  draw(performance.now(),-1); onStatus("Starting…");
+  draw(performance.now(), -1);
+  onStatus("Recording soon…");
   return new Promise<Blob>((resolve, reject) => {
     let stopped=false, started=false, rafId=0, settled=false;
     const ok=(v:Blob)=>{if(!settled){settled=true;resolve(v);}};
