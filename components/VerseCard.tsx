@@ -67,7 +67,7 @@ type Segment = number[];
 function activeWordAt(segments: Segment[], timeMs: number): number {
   for (const seg of segments) {
     if (seg.length >= 4) {
-      const [ , wEnd, s, e] = seg;
+      const [, wEnd, s, e] = seg;
       if (timeMs >= s && timeMs < e) return wEnd - 1;
     } else if (seg.length === 3) {
       const [w, s, e] = seg;
@@ -88,9 +88,7 @@ function ensureArabicFontsLoaded(): Promise<void> {
       "https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Scheherazade+New:wght@400;700&display=swap";
     document.head.appendChild(link);
   }
-  if (document.fonts && document.fonts.ready) {
-    return document.fonts.ready.then(() => undefined);
-  }
+  if (document.fonts?.ready) return document.fonts.ready.then(() => undefined);
   return new Promise((r) => setTimeout(r, 300));
 }
 
@@ -119,36 +117,44 @@ export function VerseCard({
   const [segments, setSegments] = useState<Segment[]>([]);
   const [playing, setPlaying] = useState(false);
   const [currentWord, setCurrentWord] = useState(-1);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const rafRef = useRef<number | null>(null);
 
-  // Auto-continue
+  // Refs that live outside React render cycle
+  const audioRef        = useRef<HTMLAudioElement | null>(null);
+  const rafRef          = useRef<number | null>(null);
+  const autoRef         = useRef(false);
+
+  // ── Auto-continue state ───────────────────────────────────────────────
   const [chainVerse, setChainVerse] = useState<Verse | null>(null);
-  const [autoActive, setAutoActive] = useState(false);
-  const [autoStatus, setAutoStatus] = useState<string | null>(null);
-  const autoRef = useRef(false);
+  const [autoActive,  setAutoActive]  = useState(false);
+  const [autoStatus,  setAutoStatus]  = useState<string | null>(null);
 
-  // Text fade — only the text content fades, the card shell is static
+  // Text visibility — only the text content div fades; card shell is static
   const [textVisible, setTextVisible] = useState(true);
 
-  // Crossfade pre-fetch refs — all reads/writes inside the RAF loop, no re-renders
-  const nextAudioRef = useRef<HTMLAudioElement | null>(null);
-  const nextAudioUrlRef = useRef<string | null>(null);
-  const nextSegmentsRef = useRef<Segment[]>([]);
-  const nextVerseRef = useRef<Verse | null>(null);
-  const prefetchDoneRef = useRef(false);
-  const crossfadeActiveRef = useRef(false);
-  const crossfadeRafRef = useRef<number | null>(null);
+  // ── Pre-fetch refs — all written/read inside the RAF + onended callback ──
+  // These are NEVER setState — that prevents the fetch effect from re-firing
+  const nextAudioRef     = useRef<HTMLAudioElement | null>(null);
+  const nextAudioUrlRef  = useRef<string | null>(null);
+  const nextSegmentsRef  = useRef<Segment[]>([]);
+  const nextVerseRef     = useRef<Verse | null>(null);
+  const prefetchDoneRef  = useRef(false);
 
-  // Snapshot of deps needed inside RAF (avoids stale closures without re-creating the loop)
-  const reciterIdRef = useRef(reciterId);
+  // When true, the [currentVerse, reciterId] fetch effect must skip its reset.
+  // Set to true immediately before we swap chainVerse during an auto-advance.
+  const skipAudioResetRef = useRef(false);
+
+  // Stable snapshots for use inside callbacks (avoid stale closures)
+  const reciterIdRef  = useRef(reciterId);
   useEffect(() => { reciterIdRef.current = reciterId; }, [reciterId]);
-  const allVersesRef = useRef(allVerses);
+  const allVersesRef  = useRef(allVerses);
   useEffect(() => { allVersesRef.current = allVerses; }, [allVerses]);
-  const chainVerseRef = useRef(chainVerse);
+  const chainVerseRef = useRef<Verse | null>(null);
   useEffect(() => { chainVerseRef.current = chainVerse; }, [chainVerse]);
+  const verseRef      = useRef<Verse | null>(verse);
+  useEffect(() => { verseRef.current = verse; }, [verse]);
+  // Stable ref for the ended-callback so audio elements can always call the latest version
+  const onEndedRef = useRef<() => void>(() => {});
 
-  // Derived current verse
   const currentVerse = (chainVerse ?? verse) as Verse;
 
   const [capturing, setCapturing] = useState(false);
@@ -158,7 +164,7 @@ export function VerseCard({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const readFullyTriggeredRef = useRef(false);
 
-  // Reset everything when the top-level verse prop changes
+  // ── Reset everything when the top-level verse prop changes ────────────────
   useEffect(() => {
     setChainVerse(null);
     setAutoActive(false);
@@ -166,19 +172,15 @@ export function VerseCard({
     autoRef.current = false;
     setTextVisible(true);
     prefetchDoneRef.current = false;
-    crossfadeActiveRef.current = false;
-    if (crossfadeRafRef.current) {
-      cancelAnimationFrame(crossfadeRafRef.current);
-      crossfadeRafRef.current = null;
-    }
+    skipAudioResetRef.current = false;
     if (nextAudioRef.current) {
       nextAudioRef.current.pause();
       nextAudioRef.current.src = "";
       nextAudioRef.current = null;
     }
-    nextAudioUrlRef.current = null;
-    nextSegmentsRef.current = [];
-    nextVerseRef.current = null;
+    nextAudioUrlRef.current  = null;
+    nextSegmentsRef.current  = [];
+    nextVerseRef.current     = null;
   }, [verse]);
 
   useEffect(() => { ensureArabicFontsLoaded(); }, []);
@@ -193,7 +195,7 @@ export function VerseCard({
     try { sessionStorage.setItem(RECITER_STORAGE_KEY, reciterId); } catch {}
   }, [reciterId]);
 
-  // Fetch AI analysis (skip during auto-play)
+  // ── AI analysis (skipped during auto-play) ───────────────────────────────
   useEffect(() => {
     if (!currentVerse) return;
     if (autoActive) { setContext(null); setLoadingContext(false); return; }
@@ -205,11 +207,11 @@ export function VerseCard({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        arabic: currentVerse.arabic,
+        arabic:      currentVerse.arabic,
         translation: currentVerse.translation,
-        surahName: currentVerse.surahName,
-        surah: currentVerse.surah,
-        ayah: currentVerse.ayah,
+        surahName:   currentVerse.surahName,
+        surah:       currentVerse.surah,
+        ayah:        currentVerse.ayah,
       }),
       signal: ctrl.signal,
     })
@@ -221,27 +223,38 @@ export function VerseCard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVerse, autoActive]);
 
-  // Fetch audio for current verse
+  // ── Audio fetch for current verse ────────────────────────────────────────
+  // Guard: if skipAudioResetRef is true we already have the audio ready from
+  // a pre-fetch; skip the reset and let the auto-advance code handle playback.
   useEffect(() => {
     if (!currentVerse) return;
-    setAudioUrl(null);
-    setSegments([]);
-    setCurrentWord(-1);
+
+    if (skipAudioResetRef.current) {
+      skipAudioResetRef.current = false;
+      return; // pre-fetched audio is already in audioRef — do not clobber it
+    }
+
+    // Pause and release whatever was playing
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.onended = null;
       audioRef.current.onerror = null;
-      setPlaying(false);
+      audioRef.current = null;
     }
+    setAudioUrl(null);
+    setSegments([]);
+    setCurrentWord(-1);
+    setPlaying(false);
+
     const ctrl = new AbortController();
     const q = new URLSearchParams({
       reciter: reciterId,
-      ayah: `${currentVerse.surah}:${currentVerse.ayah}`,
+      ayah:    `${currentVerse.surah}:${currentVerse.ayah}`,
     });
     fetch(`/api/recitation?${q.toString()}`, { signal: ctrl.signal })
       .then((r) => r.json())
       .then((d) => {
-        if (d?.audioUrl) setAudioUrl(d.audioUrl);
+        if (d?.audioUrl)              setAudioUrl(d.audioUrl);
         if (Array.isArray(d?.segments)) setSegments(d.segments);
       })
       .catch(() => {});
@@ -249,20 +262,20 @@ export function VerseCard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVerse, reciterId]);
 
-  // ── Pre-fetch next verse audio silently ────────────────────────────────
+  // ── Pre-fetch next verse audio silently ──────────────────────────────────
+  // Called from the RAF loop when the current verse reaches 80% progress.
   const triggerPrefetch = useCallback(() => {
-    const cv = chainVerseRef.current ?? verse;
+    const cv = chainVerseRef.current ?? verseRef.current;
     const av = allVersesRef.current;
     if (!cv || !av) return;
-    const nextV = av.find(
-      (v) => v.surah === cv.surah && v.ayah === cv.ayah + 1
-    );
+
+    const nextV = av.find((v) => v.surah === cv.surah && v.ayah === cv.ayah + 1);
     if (!nextV) return;
     nextVerseRef.current = nextV;
 
     const q = new URLSearchParams({
       reciter: reciterIdRef.current,
-      ayah: `${nextV.surah}:${nextV.ayah}`,
+      ayah:    `${nextV.surah}:${nextV.ayah}`,
     });
     fetch(`/api/recitation?${q.toString()}`)
       .then((r) => r.json())
@@ -271,94 +284,113 @@ export function VerseCard({
         const a = new Audio();
         a.crossOrigin = "anonymous";
         a.src = d.audioUrl;
-        a.volume = 0;
+        a.volume = 0; // silent until needed
         a.preload = "auto";
         a.load();
-        nextAudioRef.current = a;
+        nextAudioRef.current    = a;
         nextAudioUrlRef.current = d.audioUrl;
         nextSegmentsRef.current = Array.isArray(d.segments) ? d.segments : [];
       })
       .catch(() => {});
-  }, [verse]);
-
-  // ── Seamless crossfade transition ──────────────────────────────────────
-  // Called when current audio reaches 95%. Handles both the volume crossfade
-  // and the visual text swap atomically.
-  const doTransition = useCallback((currentAudio: HTMLAudioElement) => {
-    const nextAudio = nextAudioRef.current;
-    const nextV = nextVerseRef.current;
-    if (!nextV || !autoRef.current) return;
-
-    // Prevent onended from triggering a second transition
-    currentAudio.onended = null;
-
-    // If we have the next audio ready, start it and crossfade volumes.
-    // If not, we proceed visually only (brief silence, acceptable fallback).
-    const hasNext = Boolean(nextAudio);
-    if (hasNext && nextAudio) {
-      nextAudio.volume = 0;
-      nextAudio.play().catch(() => {});
-    }
-
-    // Visual: fade text out over 300ms
-    setTextVisible(false);
-
-    // Volume crossfade over ~600ms (overlaps with text fade)
-    const XFADE_MS = 600;
-    const xStart = performance.now();
-    const xfade = () => {
-      const t = Math.min(1, (performance.now() - xStart) / XFADE_MS);
-      try { currentAudio.volume = Math.max(0, 1 - t); } catch {}
-      if (hasNext && nextAudio) {
-        try { nextAudio.volume = Math.min(1, t); } catch {}
-      }
-      if (t < 1) {
-        crossfadeRafRef.current = requestAnimationFrame(xfade);
-      }
-    };
-    crossfadeRafRef.current = requestAnimationFrame(xfade);
-
-    // After 300ms (text invisible): atomically swap verse data
-    setTimeout(() => {
-      if (!autoRef.current) return;
-
-      // Swap state in one batch
-      setChainVerse(nextV);
-      setCurrentWord(-1);
-      setAudioUrl(nextAudioUrlRef.current);
-      setSegments(nextSegmentsRef.current ?? []);
-
-      // Promote next audio to the active slot
-      if (hasNext && nextAudio) {
-        nextAudio.onended = () => {
-          setPlaying(false);
-          setCurrentWord(-1);
-          // Will be handled by the new RAF loop on the next verse
-        };
-        nextAudio.onerror = () => { setPlaying(false); };
-        audioRef.current = nextAudio;
-      } else {
-        // No pre-fetched audio — let the audioUrl effect spin up new playback
-        audioRef.current = null;
-        setPlaying(false);
-      }
-
-      // Clear pre-fetch slots for the NEXT verse
-      nextAudioRef.current = null;
-      nextAudioUrlRef.current = null;
-      nextSegmentsRef.current = [];
-      nextVerseRef.current = null;
-      prefetchDoneRef.current = false;
-      crossfadeActiveRef.current = false;
-
-      setAutoStatus(`${nextV.surahName} · ${nextV.ayah}`);
-
-      // Fade text back in
-      setTextVisible(true);
-    }, 300);
   }, []);
 
-  // ── Combined RAF: word highlighting + crossfade progress monitor ────────
+  // ── onended: the ONLY place where auto-advance happens ──────────────────
+  // The verse plays to FULL COMPLETION before we do anything.
+  // • If next audio was pre-fetched: instant zero-gap swap.
+  // • If not: brief visual gap, then fresh fetch starts playback when URL arrives.
+  //
+  // Defined as a ref-backed function so any audio element can call the latest
+  // version without stale-closure issues.
+  useEffect(() => {
+    onEndedRef.current = () => {
+      setCurrentWord(-1);
+
+      if (!autoRef.current) {
+        setPlaying(false);
+        return;
+      }
+
+      const nextV     = nextVerseRef.current;
+      const nextAudio = nextAudioRef.current;
+
+      if (nextV && nextAudio) {
+        // ── Zero-gap advance (pre-fetch was ready) ──────────────────
+        nextAudio.volume  = 1;
+        nextAudio.onended = () => onEndedRef.current();
+        nextAudio.onerror = () => setPlaying(false);
+
+        // Block the fetch effect — we're bringing our own audio
+        skipAudioResetRef.current = true;
+        audioRef.current = nextAudio;
+
+        // Visual: text fades out for 300ms, content swaps while invisible
+        setTextVisible(false);
+
+        // Batch all state changes into one render
+        setChainVerse(nextV);
+        setAudioUrl(nextAudioUrlRef.current);
+        setSegments(nextSegmentsRef.current.length > 0 ? [...nextSegmentsRef.current] : []);
+        setAutoStatus(`${nextV.surahName} · ${nextV.ayah}`);
+
+        // Clear pre-fetch slots
+        nextAudioRef.current    = null;
+        nextAudioUrlRef.current = null;
+        nextSegmentsRef.current = [];
+        nextVerseRef.current    = null;
+        prefetchDoneRef.current = false;
+
+        // Start playback — stays "playing" with no gap
+        nextAudio.play()
+          .then(() => setPlaying(true))
+          .catch(() => setPlaying(false));
+
+        // Text fades back in once content has swapped (~one render later)
+        setTimeout(() => setTextVisible(true), 300);
+      } else {
+        // ── Fallback (pre-fetch not ready) ──────────────────────────
+        setPlaying(false);
+        audioRef.current = null; // signal fallbackAutoStart effect
+
+        const cv = chainVerseRef.current ?? verseRef.current;
+        if (!cv || !allVersesRef.current) {
+          autoRef.current = false; setAutoActive(false); return;
+        }
+        const nextVFallback = allVersesRef.current.find(
+          (v) => v.surah === cv.surah && v.ayah === cv.ayah + 1,
+        );
+        if (!nextVFallback) {
+          autoRef.current = false;
+          setAutoActive(false);
+          setAutoStatus("End of Surah");
+          setTimeout(() => setAutoStatus(null), 3000);
+          return;
+        }
+        // Trigger audio fetch via [currentVerse, reciterId] effect
+        setTextVisible(false);
+        setChainVerse(nextVFallback);
+        setAutoStatus(`${nextVFallback.surahName} · ${nextVFallback.ayah}`);
+        prefetchDoneRef.current = false;
+        setTimeout(() => setTextVisible(true), 300);
+      }
+    };
+  }); // runs every render — always current, never stale
+
+  // ── Fallback auto-start: fires when a fresh audioUrl lands after a gap advance
+  // Conditions: auto is active, audio URL just loaded, not already playing,
+  //             and there's no active audio element (we set audioRef.current = null in fallback)
+  useEffect(() => {
+    if (!autoRef.current || !audioUrl || playing || audioRef.current) return;
+    const a = new Audio();
+    a.crossOrigin = "anonymous";
+    a.src = audioUrl;
+    a.onended = () => onEndedRef.current();
+    a.onerror = () => setPlaying(false);
+    audioRef.current = a;
+    a.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioUrl]);
+
+  // ── RAF: word highlighting + pre-fetch trigger at 80% ────────────────────
   useEffect(() => {
     if (!playing || !audioRef.current) return;
     const a = audioRef.current;
@@ -373,102 +405,35 @@ export function VerseCard({
         if (idx !== lastIdx) { lastIdx = idx; setCurrentWord(idx); }
       }
 
-      // Crossfade progress (auto mode only)
+      // Kick off pre-fetch at 80% (auto mode only)
       if (autoRef.current && a.duration > 0 && !isNaN(a.duration)) {
-        const progress = a.currentTime / a.duration;
-
-        if (progress >= 0.80 && !prefetchDoneRef.current) {
+        if (a.currentTime / a.duration >= 0.80 && !prefetchDoneRef.current) {
           prefetchDoneRef.current = true;
           triggerPrefetch();
-        }
-
-        if (
-          progress >= 0.95 &&
-          !crossfadeActiveRef.current &&
-          nextAudioRef.current
-        ) {
-          crossfadeActiveRef.current = true;
-          doTransition(a);
-          return; // stop this RAF — doTransition manages the rest
         }
       }
 
       rafRef.current = requestAnimationFrame(tick);
     };
-
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, segments]);
 
-  // Cleanup audio on verse prop change
+  // Cleanup audio when the top-level verse prop changes
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = "";
-      }
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ""; }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (crossfadeRafRef.current) cancelAnimationFrame(crossfadeRafRef.current);
     };
   }, [verse]);
 
   const words = useMemo(
     () => currentVerse?.arabic.split(/\s+/).filter(Boolean) ?? [],
-    [currentVerse]
+    [currentVerse],
   );
 
-  // Fallback for when audio ends without a successful crossfade (short verses,
-  // network delay, end of Surah)
-  const onAudioEnded = useCallback(() => {
-    if (crossfadeActiveRef.current) return; // crossfade already took over
-    setPlaying(false);
-    setCurrentWord(-1);
-    if (!autoRef.current || !allVersesRef.current) return;
-    const cv = chainVerseRef.current ?? verse;
-    if (!cv) return;
-    const nextV = allVersesRef.current.find(
-      (v) => v.surah === cv.surah && v.ayah === cv.ayah + 1
-    );
-    if (!nextV) {
-      setAutoActive(false);
-      autoRef.current = false;
-      setAutoStatus("End of Surah");
-      setTimeout(() => setAutoStatus(null), 3000);
-      return;
-    }
-    // Brief gap fallback (no pre-fetched audio available)
-    setTextVisible(false);
-    setTimeout(() => {
-      if (!autoRef.current) return;
-      setChainVerse(nextV);
-      setCurrentWord(-1);
-      setAudioUrl(null);
-      setSegments([]);
-      audioRef.current = null;
-      prefetchDoneRef.current = false;
-      crossfadeActiveRef.current = false;
-      setAutoStatus(`${nextV.surahName} · ${nextV.ayah}`);
-      setTextVisible(true);
-    }, 300);
-  }, [verse]);
-
-  // When a new audioUrl arrives after an auto-advance fallback, start playing
-  useEffect(() => {
-    if (!autoRef.current || !audioUrl || playing) return;
-    // Only auto-start if we just transitioned (chainVerse changed and we need to play)
-    // We use the fact that audioRef.current is null after fallback transition
-    if (audioRef.current) return;
-    const a = new Audio();
-    a.crossOrigin = "anonymous";
-    a.src = audioUrl;
-    a.onended = onAudioEnded;
-    a.onerror = () => { setPlaying(false); };
-    audioRef.current = a;
-    a.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioUrl]);
-
+  // ── Manual play / pause ──────────────────────────────────────────────────
   const toggleAudio = useCallback(() => {
     if (!currentVerse || !audioUrl) return;
     if (playing && audioRef.current) {
@@ -478,17 +443,17 @@ export function VerseCard({
     }
     const a = audioRef.current ?? new Audio();
     a.crossOrigin = "anonymous";
-    a.src = audioUrl;
-    a.onended = onAudioEnded;
-    a.onerror = () => { setPlaying(false); };
+    if (!audioRef.current) a.src = audioUrl;
+    a.onended = () => onEndedRef.current();
+    a.onerror = () => setPlaying(false);
     audioRef.current = a;
     a.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-  }, [currentVerse, audioUrl, playing, onAudioEnded]);
+  }, [currentVerse, audioUrl, playing]);
 
   const handleStartAutoPlay = useCallback(() => {
     autoRef.current = true;
     setAutoActive(true);
-    setAutoStatus("Auto-continuing on…");
+    setAutoStatus("Continuing…");
     if (!playing) toggleAudio();
   }, [playing, toggleAudio]);
 
@@ -500,14 +465,12 @@ export function VerseCard({
       audioRef.current.pause();
       setPlaying(false);
     }
-    // Cleanup pre-fetched audio
     if (nextAudioRef.current) {
       nextAudioRef.current.pause();
       nextAudioRef.current.src = "";
       nextAudioRef.current = null;
     }
     prefetchDoneRef.current = false;
-    crossfadeActiveRef.current = false;
   }, [playing]);
 
   const handleScreenshot = async () => {
@@ -523,27 +486,17 @@ export function VerseCard({
         share?: (d: { files?: File[]; title?: string; text?: string }) => Promise<void>;
       };
       if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
-        await nav.share({
-          files: [file],
-          title: `${currentVerse.surahName} · ${currentVerse.ayah}`,
-          text: "AYAT",
-        });
+        await nav.share({ files: [file], title: `${currentVerse.surahName} · ${currentVerse.ayah}`, text: "AYAT" });
       } else {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 500);
       }
       reminders.trigger("share");
-    } catch (e) {
-      console.error("screenshot failed", e);
-    } finally {
-      setCapturing(false);
-    }
+    } catch (e) { console.error("screenshot failed", e); }
+    finally { setCapturing(false); }
   };
 
   const handleShareVideo = async () => {
@@ -553,15 +506,8 @@ export function VerseCard({
     try {
       await ensureArabicFontsLoaded();
       setVideoStatus("Preparing…");
-      const blob = await recordVerseVideo({
-        verse,
-        words,
-        audioUrl,
-        segments,
-        onStatus: setVideoStatus,
-      });
+      const blob = await recordVerseVideo({ verse, words, audioUrl, segments, onStatus: setVideoStatus });
       setVideoStatus("Processing…");
-      // Brief pause to let "Processing…" show before save dialog
       await new Promise((r) => setTimeout(r, 400));
       const ext = blob.type.includes("mp4") ? "mp4" : "webm";
       const filename = `ayat-${verse.surah}-${verse.ayah}.${ext}`;
@@ -571,19 +517,12 @@ export function VerseCard({
         share?: (d: { files?: File[]; title?: string; text?: string }) => Promise<void>;
       };
       if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
-        await nav.share({
-          files: [file],
-          title: `${verse.surahName} · ${verse.ayah}`,
-          text: "From AYAT",
-        });
+        await nav.share({ files: [file], title: `${verse.surahName} · ${verse.ayah}`, text: "From AYAT" });
       } else {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 500);
       }
       reminders.trigger("share");
@@ -591,30 +530,25 @@ export function VerseCard({
       console.error("video share failed", e);
       setVideoStatus("Recording failed · tap to try again");
     } finally {
-      setTimeout(() => {
-        setVideoStatus(null);
-        setRecording(false);
-      }, 2500);
+      setTimeout(() => { setVideoStatus(null); setRecording(false); }, 2500);
     }
   };
 
   const onBodyScroll = useCallback(() => {
     const el = bodyRef.current;
     if (!el || readFullyTriggeredRef.current) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-    if (atBottom) {
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) {
       readFullyTriggeredRef.current = true;
       reminders.trigger("read-fully");
     }
   }, [reminders]);
 
-  const sections = useMemo(() => (context ? parseContext(context) : []), [context]);
-  const nextSection = sections.find((s) => s.key === "NEXT");
-  const nextRef = nextSection ? parseNextRef(nextSection.body) : null;
-  const nextVerse =
-    nextRef && allVerses
-      ? allVerses.find((v) => v.surah === nextRef.surah && v.ayah === nextRef.ayah)
-      : null;
+  const sections     = useMemo(() => (context ? parseContext(context) : []), [context]);
+  const nextSection  = sections.find((s) => s.key === "NEXT");
+  const nextRef      = nextSection ? parseNextRef(nextSection.body) : null;
+  const nextVerse    = nextRef && allVerses
+    ? allVerses.find((v) => v.surah === nextRef.surah && v.ayah === nextRef.ayah)
+    : null;
 
   return (
     <AnimatePresence>
@@ -653,58 +587,17 @@ export function VerseCard({
               </div>
             )}
 
-            {/* Header — surah label + audio controls. Screenshot button moved to bottom. */}
-            <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+            {/* Header — surah name only */}
+            <div className="mb-6 flex items-center justify-between">
               <div className="font-serif-fine text-xs uppercase tracking-[0.25em] text-white/50">
                 {currentVerse.surahName} · {currentVerse.ayah}
               </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  onClick={toggleAudio}
-                  disabled={!audioUrl}
-                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] font-serif-fine transition-colors disabled:opacity-40 ${
-                    playing
-                      ? "border-[#ffd700]/50 text-[#ffd700] animate-pulse"
-                      : "border-white/15 text-white/60 hover:text-white hover:border-white/40"
-                  }`}
-                  aria-label={playing ? "Pause recitation" : "Play recitation"}
-                >
-                  {playing ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
-                  {playing ? "Pause" : "Recite"}
-                </button>
-                <select
-                  value={reciterId}
-                  onChange={(e) => setReciterId(e.target.value)}
-                  className="rounded-full border border-white/15 bg-black/60 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] font-serif-fine text-white/60 hover:text-white hover:border-white/40 transition-colors outline-none appearance-none cursor-pointer"
-                  aria-label="Select reciter"
-                >
-                  {RECITERS.map((r) => (
-                    <option
-                      key={r.id}
-                      value={r.id}
-                      className="bg-black text-white normal-case tracking-normal"
-                    >
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
 
-            {/* ── Verse text — only this div fades during transitions ── */}
-            {/* Fixed min-heights prevent layout jumps when verse length varies */}
-            <div
-              style={{
-                opacity: textVisible ? 1 : 0,
-                transition: "opacity 300ms ease",
-              }}
-            >
-              {/* Arabic — min-height reserves space for up to ~4 lines */}
+            {/* ── Verse text — only this section fades during transitions ── */}
+            <div style={{ opacity: textVisible ? 1 : 0, transition: "opacity 300ms ease" }}>
               <div className="min-h-[7rem] mb-6">
-                <p
-                  dir="rtl"
-                  className="arabic text-right text-[clamp(1.5rem,3.5vw,2.25rem)] text-white leading-relaxed"
-                >
+                <p dir="rtl" className="arabic text-right text-[clamp(1.5rem,3.5vw,2.25rem)] text-white leading-relaxed">
                   {words.map((w, i) => (
                     <span
                       key={i}
@@ -714,25 +607,49 @@ export function VerseCard({
                           : "text-white transition-[color,text-shadow] duration-300"
                       }
                     >
-                      {w}
-                      {i < words.length - 1 ? " " : ""}
+                      {w}{i < words.length - 1 ? " " : ""}
                     </span>
                   ))}
                 </p>
               </div>
-
-              {/* Transliteration — min-height for ~2 lines */}
               <div className="min-h-[3rem] mb-4">
                 <p className="font-serif-fine italic text-white/55 text-sm md:text-base leading-relaxed">
                   {currentVerse.transliteration}
                 </p>
               </div>
-
-              {/* Translation — min-height for ~3 lines */}
-              <div className="min-h-[4.5rem] mb-6">
+              <div className="min-h-[4.5rem] mb-5">
                 <p className="font-serif-fine text-white/90 text-base md:text-lg leading-relaxed">
                   {currentVerse.translation}
                 </p>
+              </div>
+
+              {/* Recite controls — directly below the verse, easy reach */}
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <button
+                  onClick={toggleAudio}
+                  disabled={!audioUrl}
+                  className={`flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-[11px] uppercase tracking-[0.2em] font-serif-fine transition-colors disabled:opacity-40 ${
+                    playing
+                      ? "border-[#ffd700]/50 text-[#ffd700] animate-pulse"
+                      : "border-white/20 text-white/70 hover:text-white hover:border-white/50"
+                  }`}
+                  aria-label={playing ? "Pause recitation" : "Play recitation"}
+                >
+                  {playing ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                  {playing ? "Pause" : "Recite"}
+                </button>
+                <select
+                  value={reciterId}
+                  onChange={(e) => setReciterId(e.target.value)}
+                  className="rounded-full border border-white/15 bg-black/60 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none appearance-none cursor-pointer"
+                  aria-label="Select reciter"
+                >
+                  {RECITERS.map((r) => (
+                    <option key={r.id} value={r.id} className="bg-black text-white normal-case tracking-normal">
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -741,9 +658,7 @@ export function VerseCard({
                 <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">
                   For what you carried here
                 </div>
-                <p className="font-serif-fine text-white/90 text-sm md:text-base leading-relaxed">
-                  {reflection}
-                </p>
+                <p className="font-serif-fine text-white/90 text-sm md:text-base leading-relaxed">{reflection}</p>
               </div>
             )}
 
@@ -755,34 +670,19 @@ export function VerseCard({
               ) : (
                 <>
                   {loadingContext && (
-                    <p className="font-serif-fine text-white/50 italic text-sm">
-                      Finding where this verse lands…
-                    </p>
+                    <p className="font-serif-fine text-white/50 italic text-sm">Finding where this verse lands…</p>
                   )}
                   {!loadingContext && sections.length > 0 && (
                     <>
-                      {sections
-                        .filter(
-                          (s) =>
-                            s.key === "SCENE" ||
-                            s.key === "MEANING" ||
-                            s.key === "HITS",
-                        )
-                        .map(({ key, label, body }) => (
-                          <div key={key}>
-                            <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-1.5">
-                              {label}
-                            </div>
-                            <p className="font-serif-fine text-white/85 text-sm md:text-base leading-relaxed">
-                              {body}
-                            </p>
-                          </div>
-                        ))}
+                      {sections.filter((s) => s.key === "SCENE" || s.key === "MEANING" || s.key === "HITS").map(({ key, label, body }) => (
+                        <div key={key}>
+                          <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-1.5">{label}</div>
+                          <p className="font-serif-fine text-white/85 text-sm md:text-base leading-relaxed">{body}</p>
+                        </div>
+                      ))}
                       {sections.find((s) => s.key === "REFLECT") && (
                         <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.03] p-5">
-                          <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">
-                            Reflect
-                          </div>
+                          <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">Reflect</div>
                           <p className="font-serif-fine italic text-white text-base md:text-lg leading-relaxed">
                             {sections.find((s) => s.key === "REFLECT")!.body}
                           </p>
@@ -790,9 +690,7 @@ export function VerseCard({
                       )}
                       {nextSection && (
                         <div className="mt-4">
-                          <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-2">
-                            Read next
-                          </div>
+                          <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-2">Read next</div>
                           {nextVerse ? (
                             <button
                               onClick={() => onJumpToVerse(nextVerse)}
@@ -802,25 +700,19 @@ export function VerseCard({
                                 <div className="font-serif-fine text-xs uppercase tracking-[0.18em] text-white/50">
                                   {nextVerse.surahName} · {nextVerse.ayah}
                                 </div>
-                                <div className="font-serif-fine text-sm text-white/80 mt-1 leading-snug">
-                                  {nextRef?.reason}
-                                </div>
+                                <div className="font-serif-fine text-sm text-white/80 mt-1 leading-snug">{nextRef?.reason}</div>
                               </div>
                               <ArrowRight className="h-4 w-4 text-white/40 group-hover:text-white/90 group-hover:translate-x-0.5 transition-all" />
                             </button>
                           ) : (
-                            <p className="font-serif-fine text-white/70 text-sm leading-relaxed">
-                              {nextSection.body}
-                            </p>
+                            <p className="font-serif-fine text-white/70 text-sm leading-relaxed">{nextSection.body}</p>
                           )}
                         </div>
                       )}
                     </>
                   )}
                   {!loadingContext && !context && (
-                    <p className="font-serif-fine text-white/40 text-xs italic">
-                      Context unavailable for this verse.
-                    </p>
+                    <p className="font-serif-fine text-white/40 text-xs italic">Context unavailable for this verse.</p>
                   )}
                 </>
               )}
@@ -833,29 +725,23 @@ export function VerseCard({
                   onClick={handleStartAutoPlay}
                   disabled={!audioUrl}
                   className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-4 py-2 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-white/50 hover:text-white/80 transition-colors disabled:opacity-30"
-                  aria-label="Auto-continue recitation through Surah"
                 >
-                  <Volume2 className="h-3 w-3" />
-                  Continue Surah
+                  <Volume2 className="h-3 w-3" /> Continue Surah
                 </button>
               ) : (
                 <button
                   onClick={handleStopAutoPlay}
                   className="flex items-center gap-1.5 rounded-full border border-[#ffd700]/30 bg-[#ffd700]/[0.04] px-4 py-2 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-[#ffd700]/80 hover:text-[#ffd700] hover:border-[#ffd700]/60 transition-colors"
-                  aria-label="Stop auto-continue"
                 >
-                  <StopCircle className="h-3 w-3" />
-                  Stop
+                  <StopCircle className="h-3 w-3" /> Stop
                 </button>
               )}
               {autoStatus && (
-                <p className="font-serif-fine text-[10px] italic text-white/40 animate-pulse">
-                  {autoStatus}
-                </p>
+                <p className="font-serif-fine text-[10px] italic text-white/40 animate-pulse">{autoStatus}</p>
               )}
             </div>
 
-            {/* Bottom action row — Screenshot + Video */}
+            {/* Bottom: Video + Screenshot */}
             <div className="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
               <button
                 onClick={handleShareVideo}
@@ -865,26 +751,19 @@ export function VerseCard({
                 <Film className="h-4 w-4" />
                 {recording ? (videoStatus ?? "Recording…") : "Share as video"}
               </button>
-
               <button
                 onClick={handleScreenshot}
                 disabled={capturing}
                 className="group flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.01] hover:bg-white/[0.05] hover:border-white/25 px-4 py-2.5 text-xs font-serif-fine text-white/55 hover:text-white/80 transition-colors disabled:opacity-40"
-                aria-label="Save verse as image"
               >
                 <Camera className="h-3.5 w-3.5" />
                 {capturing ? "Saving…" : "Screenshot"}
               </button>
-
               {!audioUrl && (
-                <p className="text-center font-serif-fine text-[11px] italic text-white/40">
-                  Loading recitation…
-                </p>
+                <p className="text-center font-serif-fine text-[11px] italic text-white/40">Loading recitation…</p>
               )}
               {recording && videoStatus && (
-                <p className="text-center font-serif-fine text-[11px] italic text-white/50">
-                  {videoStatus}
-                </p>
+                <p className="text-center font-serif-fine text-[11px] italic text-white/50">{videoStatus}</p>
               )}
             </div>
           </motion.div>
@@ -895,482 +774,219 @@ export function VerseCard({
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  SCREENSHOT GENERATOR
+//  SCREENSHOT
 // ═══════════════════════════════════════════════════════════════════════
-
 interface ScreenshotArgs { verse: Verse; words: string[] }
 
 async function screenshotVerseCanvas({ verse, words }: ScreenshotArgs): Promise<Blob> {
-  const W = 1080;
-  const H = 1920;
+  const W = 1080, H = 1920;
   const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctxN = canvas.getContext("2d", { alpha: false });
-  if (!ctxN) throw new Error("canvas 2d unavailable");
-  const ctx: CanvasRenderingContext2D = ctxN;
-
-  const ARABIC_FONT = `"Amiri", "Scheherazade New", "Traditional Arabic", serif`;
-  const ENGLISH_FONT = `Georgia, "Times New Roman", serif`;
-  const margin = 90;
-  const arabicMaxW = W - margin * 2;
-
-  function layoutArabicS(size: number): Array<{ words: Array<{ word: string; idx: number; width: number }>; totalW: number }> {
-    ctx.font = `${size}px ${ARABIC_FONT}`;
-    const spaceW = ctx.measureText(" ").width;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d", { alpha: false })!;
+  if (!ctx) throw new Error("canvas 2d unavailable");
+  const AF = `"Amiri","Scheherazade New","Traditional Arabic",serif`;
+  const EF = `Georgia,"Times New Roman",serif`;
+  const M  = 90;
+  const maxW = W - M * 2;
+  function layout(size: number) {
+    ctx.font = `${size}px ${AF}`;
+    const sp = ctx.measureText(" ").width;
     const lines: Array<{ words: Array<{ word: string; idx: number; width: number }>; totalW: number }> = [{ words: [], totalW: 0 }];
-    let line = lines[0]; let wLen = 0;
+    let line = lines[0], wLen = 0;
     for (let i = 0; i < words.length; i++) {
       const wm = ctx.measureText(words[i]).width;
-      const need = wm + (line.words.length > 0 ? spaceW : 0);
-      if (wLen + need > arabicMaxW && line.words.length > 0) {
-        line.totalW = wLen;
-        lines.push({ words: [], totalW: 0 }); line = lines[lines.length - 1]; wLen = 0;
-      }
-      if (line.words.length > 0) wLen += spaceW;
+      const need = wm + (line.words.length > 0 ? sp : 0);
+      if (wLen + need > maxW && line.words.length > 0) { line.totalW = wLen; lines.push({ words: [], totalW: 0 }); line = lines[lines.length - 1]; wLen = 0; }
+      if (line.words.length > 0) wLen += sp;
       line.words.push({ word: words[i], idx: i, width: wm }); wLen += wm;
     }
-    line.totalW = wLen;
-    return lines;
+    line.totalW = wLen; return lines;
   }
-  function wrapS(text: string, maxW: number, font: string): string[] {
+  function wrap(text: string, mW: number, font: string) {
     ctx.font = font;
-    const tokens = text.split(/\s+/); const out: string[] = []; let line = "";
-    for (const t of tokens) {
-      const test = line ? line + " " + t : t;
-      if (ctx.measureText(test).width > maxW && line) { out.push(line); line = t; } else line = test;
-    }
-    if (line) out.push(line); return out;
+    const toks = text.split(/\s+/); const out: string[] = []; let ln = "";
+    for (const t of toks) { const test = ln ? ln + " " + t : t; if (ctx.measureText(test).width > mW && ln) { out.push(ln); ln = t; } else ln = test; }
+    if (ln) out.push(ln); return out;
   }
-
-  let arabicSize = 110;
-  let lines = layoutArabicS(arabicSize);
-  while (lines.length > 4 && arabicSize > 64) { arabicSize -= 6; lines = layoutArabicS(arabicSize); }
-  const arabicLineH = Math.round(arabicSize * 1.55);
-
-  const transFont = `italic 30px ${ENGLISH_FONT}`;
-  const translationFont = `40px ${ENGLISH_FONT}`;
-  const translitLines = wrapS(verse.transliteration, arabicMaxW, transFont).slice(0, 3);
-  const translationLines = wrapS(verse.translation, arabicMaxW, translationFont).slice(0, 5);
-
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, W, H);
-
+  let sz = 110, lines = layout(sz);
+  while (lines.length > 4 && sz > 64) { sz -= 6; lines = layout(sz); }
+  const lh = Math.round(sz * 1.55);
+  const transFont = `italic 30px ${EF}`, translaFont = `40px ${EF}`;
+  const tlLines = wrap(verse.transliteration, maxW, transFont).slice(0, 3);
+  const trLines = wrap(verse.translation, maxW, translaFont).slice(0, 5);
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
   const rng = (n: number) => ((Math.sin(n * 127.1 + 311.7) * 43758.5453) % 1 + 1) % 1;
   for (let i = 0; i < 120; i++) {
-    const x = rng(i * 3) * W; const y = rng(i * 3 + 1) * H;
-    const r = 0.6 + rng(i * 3 + 2) * 1.8;
-    ctx.globalAlpha = 0.12 + rng(i) * 0.55;
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 0.12 + rng(i) * 0.55; ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(rng(i*3)*W, rng(i*3+1)*H, 0.6 + rng(i*3+2)*1.8, 0, Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha = 1;
-
-  const glowY = H * 0.45;
-  const glow = ctx.createRadialGradient(W / 2, glowY, 40, W / 2, glowY, W * 0.85);
-  glow.addColorStop(0, "rgba(90, 70, 180, 0.45)");
-  glow.addColorStop(0.35, "rgba(40, 50, 140, 0.22)");
-  glow.addColorStop(0.8, "rgba(0, 0, 0, 0)");
+  const gY = H * 0.45, glow = ctx.createRadialGradient(W/2, gY, 40, W/2, gY, W*0.85);
+  glow.addColorStop(0,"rgba(90,70,180,0.45)"); glow.addColorStop(0.35,"rgba(40,50,140,0.22)"); glow.addColorStop(0.8,"rgba(0,0,0,0)");
   ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
-
-  ctx.fillStyle = "#C9A84C";
-  ctx.font = `500 24px ${ENGLISH_FONT}`;
-  ctx.textAlign = "right"; ctx.textBaseline = "top";
-  ctx.fillText(`${verse.surahName} · ${verse.ayah}`, W - margin, margin);
-
-  const blockH = lines.length * arabicLineH;
-  const arabicStartY = glowY - blockH / 2 + arabicLineH * 0.15;
-  ctx.font = `${arabicSize}px ${ARABIC_FONT}`;
-  ctx.textBaseline = "alphabetic"; ctx.textAlign = "center"; ctx.direction = "rtl";
+  ctx.fillStyle = "#C9A84C"; ctx.font = `500 24px ${EF}`; ctx.textAlign = "right"; ctx.textBaseline = "top";
+  ctx.fillText(`${verse.surahName} · ${verse.ayah}`, W - M, M);
+  const bH = lines.length * lh, startY = gY - bH / 2 + lh * 0.15;
+  ctx.font = `${sz}px ${AF}`; ctx.textBaseline = "alphabetic"; ctx.textAlign = "center"; ctx.direction = "rtl";
   for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
-    const y = arabicStartY + (li + 1) * arabicLineH;
-    const spaceW = ctx.measureText(" ").width;
-    let x = W / 2 + line.totalW / 2;
-    ctx.shadowColor = "rgba(255, 220, 150, 0.3)"; ctx.shadowBlur = 14; ctx.fillStyle = "#ffffff";
-    for (const item of line.words) {
-      ctx.fillText(item.word, x - item.width / 2, y);
-      x -= item.width + spaceW;
-    }
+    const l = lines[li], y = startY + (li + 1) * lh, sp = ctx.measureText(" ").width;
+    let x = W / 2 + l.totalW / 2;
+    ctx.shadowColor = "rgba(255,220,150,0.3)"; ctx.shadowBlur = 14; ctx.fillStyle = "#fff";
+    for (const item of l.words) { ctx.fillText(item.word, x - item.width/2, y); x -= item.width + sp; }
   }
   ctx.shadowBlur = 0; ctx.direction = "ltr";
-
-  ctx.textAlign = "center"; ctx.textBaseline = "top";
-  ctx.font = transFont; ctx.fillStyle = "#888888";
-  let ty = arabicStartY + blockH + 80;
-  for (const ln of translitLines) { ctx.fillText(ln, W / 2, ty); ty += 42; }
-
-  ctx.font = translationFont; ctx.fillStyle = "rgba(255,255,255,0.96)";
-  ty += 28;
-  for (const ln of translationLines) { ctx.fillText(ln, W / 2, ty); ty += 54; }
-
-  // AYAT — bottom right, no URL
-  ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = `500 22px ${ENGLISH_FONT}`;
-  ctx.fillText("AYAT", W - margin, H - margin);
-
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
-      "image/png",
-      1.0,
-    );
-  });
+  ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = transFont; ctx.fillStyle = "#888";
+  let ty = startY + bH + 80;
+  for (const ln of tlLines) { ctx.fillText(ln, W/2, ty); ty += 42; }
+  ctx.font = translaFont; ctx.fillStyle = "rgba(255,255,255,0.96)"; ty += 28;
+  for (const ln of trLines) { ctx.fillText(ln, W/2, ty); ty += 54; }
+  ctx.textAlign = "right"; ctx.textBaseline = "alphabetic"; ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = `500 22px ${EF}`;
+  ctx.fillText("AYAT", W - M, H - M);
+  return new Promise<Blob>((res, rej) => canvas.toBlob((b) => b ? res(b) : rej(new Error("toBlob failed")), "image/png", 1.0));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  VIDEO RECORDER — nuclear reset on every call
-//
-//  Every invocation:
-//  1. Stops any leftover tracks / AudioContext nodes
-//  2. Waits 300ms for the browser to release resources
-//  3. Builds everything fresh: AudioContext, canvas stream, MediaRecorder
-//  4. Pre-flight check before recording starts
-//  5. Wraps entire flow in try/catch with visible status message on error
 // ═══════════════════════════════════════════════════════════════════════
-
-interface RecordArgs {
-  verse: Verse;
-  words: string[];
-  audioUrl: string;
-  segments: Segment[];
-  onStatus: (s: string) => void;
-}
-
-// Global refs for cleanup between calls — module-level so they survive re-renders
+interface RecordArgs { verse: Verse; words: string[]; audioUrl: string; segments: Segment[]; onStatus: (s: string) => void }
 let _activeAudioCtx: AudioContext | null = null;
 let _activeStream: MediaStream | null = null;
 let _activeRecorder: MediaRecorder | null = null;
 
-async function recordVerseVideo({
-  verse,
-  words,
-  audioUrl,
-  segments,
-  onStatus,
-}: RecordArgs): Promise<Blob> {
-  if (typeof MediaRecorder === "undefined") {
-    throw new Error("MediaRecorder unsupported in this browser.");
-  }
-
-  // ── NUCLEAR RESET ─────────────────────────────────────────────────
+async function recordVerseVideo({ verse, words, audioUrl, segments, onStatus }: RecordArgs): Promise<Blob> {
+  if (typeof MediaRecorder === "undefined") throw new Error("MediaRecorder unsupported.");
   onStatus("Resetting…");
   try { _activeRecorder?.stop(); } catch {}
   _activeRecorder = null;
-  if (_activeStream) {
-    for (const t of _activeStream.getTracks()) { try { t.stop(); } catch {} }
-    _activeStream = null;
-  }
-  if (_activeAudioCtx) {
-    try { await _activeAudioCtx.close(); } catch {}
-    _activeAudioCtx = null;
-  }
-  // Give the browser 300ms to fully release hardware resources
+  if (_activeStream) { for (const t of _activeStream.getTracks()) { try { t.stop(); } catch {} } _activeStream = null; }
+  if (_activeAudioCtx) { try { await _activeAudioCtx.close(); } catch {} _activeAudioCtx = null; }
   await new Promise((r) => setTimeout(r, 300));
-
-  // ── CANVAS ────────────────────────────────────────────────────────
-  const W = 1080;
-  const H = 1920;
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctxNullable = canvas.getContext("2d", { alpha: false });
-  if (!ctxNullable) throw new Error("canvas 2d unavailable");
-  const ctx: CanvasRenderingContext2D = ctxNullable;
-
-  // ── AUDIO GRAPH ───────────────────────────────────────────────────
-  const audio = new Audio();
-  audio.crossOrigin = "anonymous";
-  audio.preload = "auto";
-  audio.src = audioUrl;
-
-  type AudioCtxCtor = typeof AudioContext;
-  const w = window as unknown as { AudioContext?: AudioCtxCtor; webkitAudioContext?: AudioCtxCtor };
-  const Ctor = w.AudioContext ?? w.webkitAudioContext;
+  const W = 1080, H = 1920;
+  const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d", { alpha: false })!;
+  if (!ctx) throw new Error("canvas 2d unavailable");
+  const audio = new Audio(); audio.crossOrigin = "anonymous"; audio.preload = "auto"; audio.src = audioUrl;
+  type ACtor = typeof AudioContext;
+  const ww = window as unknown as { AudioContext?: ACtor; webkitAudioContext?: ACtor };
+  const Ctor = ww.AudioContext ?? ww.webkitAudioContext;
   if (!Ctor) throw new Error("AudioContext unsupported");
-
-  const audioCtx = new Ctor();
-  _activeAudioCtx = audioCtx;
+  const audioCtx = new Ctor(); _activeAudioCtx = audioCtx;
   const source = audioCtx.createMediaElementSource(audio);
   const dest = audioCtx.createMediaStreamDestination();
-  source.connect(dest);
-  source.connect(audioCtx.destination);
-
-  // ── STREAM ────────────────────────────────────────────────────────
-  const canvasStream = canvas.captureStream(30);
-  _activeStream = canvasStream;
+  source.connect(dest); source.connect(audioCtx.destination);
+  const canvasStream = canvas.captureStream(30); _activeStream = canvasStream;
   for (const t of dest.stream.getAudioTracks()) canvasStream.addTrack(t);
-
-  const candidates = [
-    "video/webm;codecs=vp9,opus",
-    "video/webm;codecs=vp8,opus",
-    "video/mp4;codecs=h264,aac",
-    "video/mp4",
-    "video/webm",
-  ];
-  const mimeType =
-    candidates.find((m) => MediaRecorder.isTypeSupported?.(m)) ?? "video/webm";
-
-  const recorder = new MediaRecorder(canvasStream, {
-    mimeType,
-    videoBitsPerSecond: 6_000_000,
-    audioBitsPerSecond: 192_000,
-  });
+  const mimeType = ["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/mp4;codecs=h264,aac","video/mp4","video/webm"]
+    .find((m) => MediaRecorder.isTypeSupported?.(m)) ?? "video/webm";
+  const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 192_000 });
   _activeRecorder = recorder;
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-
-  // ── PARTICLES ─────────────────────────────────────────────────────
-  type Particle = { x: number; y: number; r: number; speed: number; phase: number; alpha: number };
-  const particles: Particle[] = [];
-  for (let i = 0; i < 120; i++) {
-    particles.push({
-      x: Math.random() * W,
-      y: Math.random() * H,
-      r: 0.6 + Math.random() * 2.0,
-      speed: 4 + Math.random() * 12,
-      phase: Math.random() * Math.PI * 2,
-      alpha: 0.15 + Math.random() * 0.65,
-    });
-  }
-
-  // ── ARABIC LAYOUT ─────────────────────────────────────────────────
-  const ARABIC_FONT = `"Amiri", "Scheherazade New", "Traditional Arabic", serif`;
-  const ENGLISH_FONT = `Georgia, "Times New Roman", serif`;
-
-  type LaidWord = { word: string; idx: number; width: number };
-  type LaidLine = { words: LaidWord[]; totalW: number };
-
-  function layoutArabic(maxW: number, size: number): LaidLine[] {
-    ctx.font = `${size}px ${ARABIC_FONT}`;
-    const spaceW = ctx.measureText(" ").width;
-    const lines: LaidLine[] = [{ words: [], totalW: 0 }];
-    let line = lines[0];
-    let wLen = 0;
+  type P = { x: number; y: number; r: number; speed: number; phase: number; alpha: number };
+  const particles: P[] = Array.from({ length: 120 }, () => ({ x: Math.random()*W, y: Math.random()*H, r: 0.6+Math.random()*2, speed: 4+Math.random()*12, phase: Math.random()*Math.PI*2, alpha: 0.15+Math.random()*0.65 }));
+  const AF = `"Amiri","Scheherazade New","Traditional Arabic",serif`, EF = `Georgia,"Times New Roman",serif`, M = 90, maxW = W - M*2;
+  type LW = { word: string; idx: number; width: number }; type LL = { words: LW[]; totalW: number };
+  function layoutV(maxWW: number, size: number): LL[] {
+    ctx.font = `${size}px ${AF}`; const sp = ctx.measureText(" ").width;
+    const lines: LL[] = [{ words: [], totalW: 0 }]; let line = lines[0], wLen = 0;
     for (let i = 0; i < words.length; i++) {
-      const wm = ctx.measureText(words[i]).width;
-      const need = wm + (line.words.length > 0 ? spaceW : 0);
-      if (wLen + need > maxW && line.words.length > 0) {
-        line.totalW = wLen;
-        lines.push({ words: [], totalW: 0 });
-        line = lines[lines.length - 1];
-        wLen = 0;
-      }
-      if (line.words.length > 0) wLen += spaceW;
-      line.words.push({ word: words[i], idx: i, width: wm });
-      wLen += wm;
+      const wm = ctx.measureText(words[i]).width, need = wm + (line.words.length > 0 ? sp : 0);
+      if (wLen + need > maxWW && line.words.length > 0) { line.totalW = wLen; lines.push({ words: [], totalW: 0 }); line = lines[lines.length-1]; wLen = 0; }
+      if (line.words.length > 0) wLen += sp;
+      line.words.push({ word: words[i], idx: i, width: wm }); wLen += wm;
     }
-    line.totalW = wLen;
-    return lines;
+    line.totalW = wLen; return lines;
   }
-
-  const margin = 90;
-  const arabicMaxW = W - margin * 2;
-  let arabicSize = 110;
-  let lines = layoutArabic(arabicMaxW, arabicSize);
-  while (lines.length > 4 && arabicSize > 64) {
-    arabicSize -= 6;
-    lines = layoutArabic(arabicMaxW, arabicSize);
+  function wrapV(text: string, mW: number, font: string) {
+    ctx.font = font; const toks = text.split(/\s+/); const out: string[] = []; let ln = "";
+    for (const t of toks) { const test = ln ? ln+" "+t : t; if (ctx.measureText(test).width > mW && ln) { out.push(ln); ln = t; } else ln = test; }
+    if (ln) out.push(ln); return out;
   }
-  const arabicLineHeight = Math.round(arabicSize * 1.55);
-
-  function wrapText(text: string, maxW: number, font: string): string[] {
-    ctx.font = font;
-    const tokens = text.split(/\s+/);
-    const out: string[] = [];
-    let line = "";
-    for (const t of tokens) {
-      const test = line ? line + " " + t : t;
-      if (ctx.measureText(test).width > maxW && line) { out.push(line); line = t; }
-      else line = test;
-    }
-    if (line) out.push(line);
-    return out;
-  }
-
-  const transFont = `italic 30px ${ENGLISH_FONT}`;
-  const translationFont = `40px ${ENGLISH_FONT}`;
-  const translitLines = wrapText(verse.transliteration, arabicMaxW, transFont).slice(0, 3);
-  const translationLines = wrapText(verse.translation, arabicMaxW, translationFont).slice(0, 5);
-
-  // ── FRAME RENDER ──────────────────────────────────────────────────
+  let sz = 110, lines = layoutV(maxW, sz);
+  while (lines.length > 4 && sz > 64) { sz -= 6; lines = layoutV(maxW, sz); }
+  const lh = Math.round(sz*1.55), tF = `italic 30px ${EF}`, trF = `40px ${EF}`;
+  const tlLines = wrapV(verse.transliteration, maxW, tF).slice(0,3);
+  const trLines = wrapV(verse.translation, maxW, trF).slice(0,5);
   let t0 = 0;
-  function draw(now: number, currentIdx: number) {
-    const tSec = t0 ? (now - t0) / 1000 : 0;
-
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, W, H);
-
+  function draw(now: number, cidx: number) {
+    const ts = t0 ? (now-t0)/1000 : 0;
+    ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H);
     for (const p of particles) {
-      p.y -= p.speed * (1 / 30);
-      if (p.y < -5) { p.y = H + 5; p.x = Math.random() * W; }
-      const twinkle = 0.5 + 0.5 * Math.sin(tSec * 2 + p.phase);
-      ctx.globalAlpha = p.alpha * twinkle;
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
+      p.y -= p.speed*(1/30); if (p.y < -5) { p.y = H+5; p.x = Math.random()*W; }
+      ctx.globalAlpha = p.alpha*(0.5+0.5*Math.sin(ts*2+p.phase)); ctx.fillStyle="#fff";
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
     }
-    ctx.globalAlpha = 1;
-
-    const glowY = H * 0.45;
-    const glow = ctx.createRadialGradient(W / 2, glowY, 40, W / 2, glowY, W * 0.85);
-    glow.addColorStop(0, "rgba(90, 70, 180, 0.45)");
-    glow.addColorStop(0.35, "rgba(40, 50, 140, 0.22)");
-    glow.addColorStop(0.8, "rgba(0, 0, 0, 0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.fillStyle = "#C9A84C";
-    ctx.font = `500 24px ${ENGLISH_FONT}`;
-    ctx.textAlign = "right";
-    ctx.textBaseline = "top";
-    ctx.fillText(`${verse.surahName} · ${verse.ayah}`, W - margin, margin);
-
-    const blockH = lines.length * arabicLineHeight;
-    const arabicStartY = glowY - blockH / 2 + arabicLineHeight * 0.15;
-    ctx.font = `${arabicSize}px ${ARABIC_FONT}`;
-    ctx.textBaseline = "alphabetic";
-    ctx.textAlign = "center";
-    ctx.direction = "rtl";
-
-    const pulse = 0.75 + 0.25 * Math.sin(tSec * 6);
-
-    for (let li = 0; li < lines.length; li++) {
-      const line = lines[li];
-      const y = arabicStartY + (li + 1) * arabicLineHeight;
-      const cx = W / 2;
-      const total = line.totalW;
-      const spaceW = ctx.measureText(" ").width;
-      let x = cx + total / 2;
-      for (const item of line.words) {
-        const active = item.idx === currentIdx;
-        const wordCenterX = x - item.width / 2;
-        if (active) {
-          ctx.shadowColor = `rgba(255, 215, 100, ${0.95 * pulse})`;
-          ctx.shadowBlur = 50 * pulse;
-          ctx.fillStyle = "#FFE27A";
-        } else {
-          ctx.shadowColor = "rgba(255, 220, 150, 0.35)";
-          ctx.shadowBlur = 14;
-          ctx.fillStyle = "#ffffff";
-        }
-        ctx.fillText(item.word, wordCenterX, y);
-        x -= item.width + spaceW;
+    ctx.globalAlpha=1;
+    const gY=H*0.45; const glow=ctx.createRadialGradient(W/2,gY,40,W/2,gY,W*0.85);
+    glow.addColorStop(0,"rgba(90,70,180,0.45)"); glow.addColorStop(0.35,"rgba(40,50,140,0.22)"); glow.addColorStop(0.8,"rgba(0,0,0,0)");
+    ctx.fillStyle=glow; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#C9A84C"; ctx.font=`500 24px ${EF}`; ctx.textAlign="right"; ctx.textBaseline="top";
+    ctx.fillText(`${verse.surahName} · ${verse.ayah}`,W-M,M);
+    const bH=lines.length*lh, sY=gY-bH/2+lh*0.15;
+    ctx.font=`${sz}px ${AF}`; ctx.textBaseline="alphabetic"; ctx.textAlign="center"; ctx.direction="rtl";
+    const pulse=0.75+0.25*Math.sin(ts*6);
+    for (let li=0; li<lines.length; li++) {
+      const l=lines[li], y=sY+(li+1)*lh, sp=ctx.measureText(" ").width; let x=W/2+l.totalW/2;
+      for (const item of l.words) {
+        const active=item.idx===cidx;
+        if (active) { ctx.shadowColor=`rgba(255,215,100,${0.95*pulse})`; ctx.shadowBlur=50*pulse; ctx.fillStyle="#FFE27A"; }
+        else { ctx.shadowColor="rgba(255,220,150,0.35)"; ctx.shadowBlur=14; ctx.fillStyle="#fff"; }
+        ctx.fillText(item.word,x-item.width/2,y); x-=item.width+sp;
       }
     }
-    ctx.shadowBlur = 0;
-    ctx.direction = "ltr";
-
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.font = transFont;
-    ctx.fillStyle = "#888888";
-    let ty = arabicStartY + blockH + 80;
-    for (const ln of translitLines) { ctx.fillText(ln, W / 2, ty); ty += 42; }
-
-    ctx.font = translationFont;
-    ctx.fillStyle = "rgba(255,255,255,0.96)";
-    ty += 28;
-    for (const ln of translationLines) { ctx.fillText(ln, W / 2, ty); ty += 54; }
-
-    // AYAT only — no URL
-    ctx.textAlign = "right";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = "rgba(255,255,255,0.55)";
-    ctx.font = `500 22px ${ENGLISH_FONT}`;
-    ctx.fillText("AYAT", W - margin, H - margin);
+    ctx.shadowBlur=0; ctx.direction="ltr";
+    ctx.textAlign="center"; ctx.textBaseline="top"; ctx.font=tF; ctx.fillStyle="#888";
+    let ty=sY+bH+80; for (const ln of tlLines) { ctx.fillText(ln,W/2,ty); ty+=42; }
+    ctx.font=trF; ctx.fillStyle="rgba(255,255,255,0.96)"; ty+=28;
+    for (const ln of trLines) { ctx.fillText(ln,W/2,ty); ty+=54; }
+    ctx.textAlign="right"; ctx.textBaseline="alphabetic"; ctx.fillStyle="rgba(255,255,255,0.55)"; ctx.font=`500 22px ${EF}`;
+    ctx.fillText("AYAT",W-M,H-M);
   }
-
-  draw(performance.now(), -1);
-  onStatus("Starting…");
-
+  draw(performance.now(),-1); onStatus("Starting…");
   return new Promise<Blob>((resolve, reject) => {
-    let stopped = false;
-    let rafId = 0;
-    let settled = false;
-    const settleResolve = (v: Blob) => { if (!settled) { settled = true; resolve(v); } };
-    const settleReject = (e: Error) => { if (!settled) { settled = true; reject(e); } };
-
-    const cleanup = () => {
-      try { cancelAnimationFrame(rafId); } catch {}
-      try { audio.pause(); } catch {}
-      try { audio.src = ""; audio.load(); } catch {}
-      try { source.disconnect(); } catch {}
-      try { dest.disconnect(); } catch {}
-      try { for (const tr of canvasStream.getTracks()) tr.stop(); } catch {}
-      audioCtx.close().catch(() => {});
-      _activeAudioCtx = null;
-      _activeStream = null;
-      _activeRecorder = null;
+    let stopped=false, started=false, rafId=0, settled=false;
+    const ok=(v:Blob)=>{if(!settled){settled=true;resolve(v);}};
+    const fail=(e:Error)=>{if(!settled){settled=true;reject(e);}};
+    const cleanup=()=>{
+      try{cancelAnimationFrame(rafId);}catch{}
+      try{audio.pause();audio.src="";}catch{}
+      try{source.disconnect();dest.disconnect();}catch{}
+      try{for(const tr of canvasStream.getTracks())tr.stop();}catch{}
+      audioCtx.close().catch(()=>{}); _activeAudioCtx=null; _activeStream=null; _activeRecorder=null;
     };
-
-    recorder.onstop = () => {
-      setTimeout(() => {
-        cleanup();
-        settleResolve(new Blob(chunks, { type: mimeType }));
-      }, 120);
-    };
-    recorder.onerror = (ev) => {
-      cleanup();
-      settleReject(new Error(`recorder error: ${(ev as Event).type}`));
-    };
-
-    const onReady = async () => {
+    recorder.onstop=()=>setTimeout(()=>{cleanup();ok(new Blob(chunks,{type:mimeType}));},120);
+    recorder.onerror=(ev)=>{cleanup();fail(new Error(`recorder error: ${(ev as Event).type}`));};
+    const onReady=async()=>{
+      // Guard: both canplaythrough and loadeddata can fire — only start once
+      if(started) return;
+      started=true;
       try {
-        // ── PRE-FLIGHT CHECK ───────────────────────────────────────
-        if (canvasStream.getTracks().length === 0) {
-          throw new Error("Canvas stream has no tracks");
-        }
-        if (audioCtx.state === "closed") {
-          throw new Error("AudioContext was closed before recording");
-        }
-        if (audio.readyState < 2) {
-          // HAVE_CURRENT_DATA minimum needed
-          throw new Error("Audio not ready");
-        }
-
+        if(canvasStream.getTracks().length===0)throw new Error("canvas stream has no tracks");
+        if(audioCtx.state==="closed")throw new Error("AudioContext closed");
         await audioCtx.resume();
         recorder.start(100);
         await audio.play();
-        t0 = performance.now();
+        t0=performance.now();
         onStatus("Recording…");
-
-        const render = () => {
-          if (stopped) return;
-          const tMs = audio.currentTime * 1000;
-          const idx = activeWordAt(segments, tMs);
-          draw(performance.now(), idx);
-          rafId = requestAnimationFrame(render);
-        };
-        rafId = requestAnimationFrame(render);
-      } catch (err) {
-        settleReject(err instanceof Error ? err : new Error(String(err)));
-      }
+        const render=()=>{ if(stopped)return; draw(performance.now(),activeWordAt(segments,audio.currentTime*1000)); rafId=requestAnimationFrame(render); };
+        rafId=requestAnimationFrame(render);
+      } catch(err){fail(err instanceof Error?err:new Error(String(err)));}
     };
-
-    audio.addEventListener("canplaythrough", onReady, { once: true });
-    audio.addEventListener(
-      "loadeddata",
-      () => { if (!stopped && !t0) onReady(); },
-      { once: true },
-    );
-    audio.addEventListener(
-      "ended",
-      () => {
-        if (stopped) return;
-        stopped = true;
-        onStatus("Processing…");
-        setTimeout(() => { try { recorder.stop(); } catch {} }, 250);
-      },
-      { once: true },
-    );
-    audio.addEventListener(
-      "error",
-      () => { settleReject(new Error("audio load failed")); },
-      { once: true },
-    );
-
-    try { audio.load(); } catch {}
+    // Listen on both events; the guard above ensures onReady only runs once.
+    // canplaythrough fires when the browser has buffered enough to play through.
+    // loadeddata fires earlier (readyState >= 2) and acts as a faster fallback.
+    audio.addEventListener("canplaythrough",onReady,{once:true});
+    audio.addEventListener("loadeddata",onReady,{once:true});
+    // Timeout fallback: if neither fires within 12s, abort cleanly
+    const loadTimeout=setTimeout(()=>fail(new Error("Audio took too long to load — try again.")),12000);
+    audio.addEventListener("ended",()=>{
+      clearTimeout(loadTimeout);
+      if(stopped)return;
+      stopped=true;
+      onStatus("Processing…");
+      setTimeout(()=>{try{recorder.stop();}catch{}},250);
+    },{once:true});
+    audio.addEventListener("error",()=>{clearTimeout(loadTimeout);fail(new Error("Audio load failed — check your connection."));},{once:true});
+    try{audio.load();}catch{}
   });
 }

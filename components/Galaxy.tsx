@@ -155,6 +155,10 @@ function ParticleField({
     return m;
   }, [verses]);
 
+  // Stable camera ref so pointer handlers always read the latest orientation
+  const cameraRef = useRef(camera);
+  useEffect(() => { cameraRef.current = camera; }, [camera]);
+
   // Swipe impulse tracking
   const swipeRef = useRef({
     prevX: 0, prevY: 0,
@@ -197,10 +201,17 @@ function ParticleField({
     const forward = new THREE.Vector3();
     camera.getWorldDirection(forward);
 
-    // Cluster settle positions — 28 units in front of camera
-    const clusterCenter = camPos.clone().add(forward.clone().multiplyScalar(28));
+    // All animation happens in camera view-plane at DEPTH units in front of camera.
+    const DEPTH = 28;
+    const clusterCenter = camPos.clone().add(forward.clone().multiplyScalar(DEPTH));
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    const up    = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+
+    // Edge distance: just outside the visible viewport at DEPTH units.
+    // FOV 55 → half-width ≈ DEPTH * tan(27.5°) ≈ 14.6. Use 17 to be just off-screen.
+    const EDGE = 17;
+    // 75% overshoot creates a genuine crossing for 2-star mode.
+    const OVERSHOOT = 0.75;
 
     const n = indices.length;
     const origin    = new Float32Array(n * 3);
@@ -210,77 +221,67 @@ function ParticleField({
 
     for (let k = 0; k < n; k++) {
       const idx = indices[k];
-      // Record actual galaxy position as origin
-      origin[k * 3 + 0] = posArr[idx * 3 + 0];
+      origin[k * 3]     = posArr[idx * 3];
       origin[k * 3 + 1] = posArr[idx * 3 + 1];
       origin[k * 3 + 2] = posArr[idx * 3 + 2];
 
-      // Settle position: spread slightly around cluster center in view plane
-      let dx = 0, dy = 0;
+      // Settle: spread around cluster center in view-plane
+      let sdx = 0, sdy = 0;
       if (n === 1) {
-        dx = 0; dy = 0;
+        sdx = 0; sdy = 0;
       } else if (n === 2) {
-        // Opposite sides
-        dx = (k === 0 ? -1 : 1) * 3.5;
-        dy = (k === 0 ? 1 : -1) * 1.0;
+        sdx = k === 0 ? -3.5 :  3.5;
+        sdy = k === 0 ?  1.0 : -1.0;
       } else {
         const angle = (k / n) * Math.PI * 2;
-        dx = Math.cos(angle) * 3.2;
-        dy = Math.sin(angle) * 3.2;
+        sdx = Math.cos(angle) * 3.2;
+        sdy = Math.sin(angle) * 3.2;
       }
-      const tgt = clusterCenter.clone()
-        .add(right.clone().multiplyScalar(dx))
-        .add(up.clone().multiplyScalar(dy));
-      settle[k * 3 + 0] = tgt.x;
-      settle[k * 3 + 1] = tgt.y;
-      settle[k * 3 + 2] = tgt.z;
+      const settlePt = clusterCenter.clone()
+        .add(right.clone().multiplyScalar(sdx))
+        .add(up.clone().multiplyScalar(sdy));
+      settle[k * 3]     = settlePt.x;
+      settle[k * 3 + 1] = settlePt.y;
+      settle[k * 3 + 2] = settlePt.z;
 
-      // Launch FROM: override for multi-star scenarios to create dramatic entrances
+      // Launch: from just off the screen edges in view-plane
+      let ldx = 0, ldy = 0;
       if (n === 1) {
-        // Single star: shoot from its galaxy position
-        launch[k * 3 + 0] = origin[k * 3 + 0];
-        launch[k * 3 + 1] = origin[k * 3 + 1];
-        launch[k * 3 + 2] = origin[k * 3 + 2];
+        // Single: diagonal from top-right corner
+        ldx =  EDGE * 0.85;
+        ldy =  EDGE * 0.85;
       } else if (n === 2) {
-        // Two stars: launch from opposite far corners of the viewport
-        const cornerDist = GALAXY_SCALE * 2.2;
-        const cornerDir = k === 0
-          ? right.clone().multiplyScalar(-cornerDist).add(up.clone().multiplyScalar(cornerDist * 0.6))
-          : right.clone().multiplyScalar(cornerDist).add(up.clone().multiplyScalar(-cornerDist * 0.6));
-        const corner = camPos.clone().add(forward.clone().multiplyScalar(30)).add(cornerDir);
-        launch[k * 3 + 0] = corner.x;
-        launch[k * 3 + 1] = corner.y;
-        launch[k * 3 + 2] = corner.z;
+        // Two: shoot in from opposite horizontal edges
+        ldx = k === 0 ? -EDGE :  EDGE;
+        ldy = k === 0 ?   2.5 : -2.5;
       } else {
-        // Three stars: launch from three different screen-edge directions
-        const edgeAngles = [Math.PI * 1.5, Math.PI * 0.16, Math.PI * 0.84]; // top, bottom-right, bottom-left
-        const edgeDist = GALAXY_SCALE * 2.0;
+        // Three: fan in from top, bottom-right, bottom-left
+        const edgeAngles = [Math.PI / 2, Math.PI * 1.17, Math.PI * 1.83];
         const ea = edgeAngles[k] ?? (k / n) * Math.PI * 2;
-        const edgeDir = right.clone().multiplyScalar(Math.cos(ea) * edgeDist)
-          .add(up.clone().multiplyScalar(Math.sin(ea) * edgeDist));
-        const edge = camPos.clone().add(forward.clone().multiplyScalar(28)).add(edgeDir);
-        launch[k * 3 + 0] = edge.x;
-        launch[k * 3 + 1] = edge.y;
-        launch[k * 3 + 2] = edge.z;
+        ldx = Math.cos(ea) * EDGE;
+        ldy = Math.sin(ea) * EDGE;
       }
+      const launchPt = clusterCenter.clone()
+        .add(right.clone().multiplyScalar(ldx))
+        .add(up.clone().multiplyScalar(ldy));
+      launch[k * 3]     = launchPt.x;
+      launch[k * 3 + 1] = launchPt.y;
+      launch[k * 3 + 2] = launchPt.z;
 
-      // Overshoot: continue past settle position by ~60% extra distance
-      // so the star "bounces off the far wall"
-      const sx = settle[k * 3 + 0];
-      const sy = settle[k * 3 + 1];
-      const sz = settle[k * 3 + 2];
-      const lx = launch[k * 3 + 0];
-      const ly = launch[k * 3 + 1];
-      const lz = launch[k * 3 + 2];
-      overshoot[k * 3 + 0] = sx + (sx - lx) * 0.5;
-      overshoot[k * 3 + 1] = sy + (sy - ly) * 0.5;
-      overshoot[k * 3 + 2] = sz + (sz - lz) * 0.5;
+      // Overshoot: continue past settle by OVERSHOOT fraction of travel distance.
+      // For 2-star this pushes each star ~6 units past the center, making them
+      // visually cross each other before snapping back — violent collision effect.
+      const sx = settlePt.x, sy = settlePt.y, sz = settlePt.z;
+      const lx = launchPt.x, ly = launchPt.y, lz = launchPt.z;
+      overshoot[k * 3]     = sx + (sx - lx) * OVERSHOOT;
+      overshoot[k * 3 + 1] = sy + (sy - ly) * OVERSHOOT;
+      overshoot[k * 3 + 2] = sz + (sz - lz) * OVERSHOOT;
     }
 
     // Warp stars to their launch positions immediately
     for (let k = 0; k < n; k++) {
       const idx = indices[k];
-      posArr[idx * 3 + 0] = launch[k * 3 + 0];
+      posArr[idx * 3]     = launch[k * 3];
       posArr[idx * 3 + 1] = launch[k * 3 + 1];
       posArr[idx * 3 + 2] = launch[k * 3 + 2];
     }
@@ -397,14 +398,22 @@ function ParticleField({
       const speed = Math.sqrt(vx * vx + vy * vy);
       if (speed < 0.5) return; // ignore slow drags (camera rotate)
 
-      // Apply impulse to all stars in the swipe direction
-      // Convert screen velocity to world space (right = +X, up = -Y in screen)
-      const impulseStrength = Math.min(speed * 1.8, 4.5);
+      // Apply impulse in camera-relative space so the stars always follow
+      // the swipe direction regardless of how OrbitControls has rotated the camera.
+      // screen-right (+vx) → camera's right axis
+      // screen-down  (+vy) → negative camera's up axis
+      const cam = cameraRef.current;
+      const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+      const upVec    = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
+      const impulse  = Math.min(speed * 1.8, 4.5) * 0.12;
+
       const vxArr = velX.current;
       const vyArr = velY.current;
+      const vzArr = velZ.current;
       for (let i = 0; i < verses.length; i++) {
-        vxArr[i] += vx * impulseStrength * 0.12;
-        vyArr[i] -= vy * impulseStrength * 0.12; // screen Y is inverted
+        vxArr[i] += (rightVec.x * vx - upVec.x * vy) * impulse;
+        vyArr[i] += (rightVec.y * vx - upVec.y * vy) * impulse;
+        vzArr[i] += (rightVec.z * vx - upVec.z * vy) * impulse;
       }
     };
 
@@ -513,15 +522,19 @@ function ParticleField({
     const totalPhase = Math.min(2, elapsed / PASS_SECS);
     const solo = shoot.indices.length === 1;
 
+    const allSettled = totalPhase >= 2;
+    // Detect crossing flash window (2-star pass-1 midpoint)
+    const inFlash = shoot.indices.length === 2 && totalPhase > 0.42 && totalPhase < 0.68;
+
     for (let k = 0; k < shoot.indices.length; k++) {
       const i = shoot.indices[k];
-      const lx = shoot.launchXYZ[k * 3 + 0];
+      const lx = shoot.launchXYZ[k * 3];
       const ly = shoot.launchXYZ[k * 3 + 1];
       const lz = shoot.launchXYZ[k * 3 + 2];
-      const ox = shoot.overshootXYZ[k * 3 + 0];
+      const ox = shoot.overshootXYZ[k * 3];
       const oy = shoot.overshootXYZ[k * 3 + 1];
       const oz = shoot.overshootXYZ[k * 3 + 2];
-      const sx = shoot.settleXYZ[k * 3 + 0];
+      const sx = shoot.settleXYZ[k * 3];
       const sy = shoot.settleXYZ[k * 3 + 1];
       const sz = shoot.settleXYZ[k * 3 + 2];
 
@@ -541,45 +554,52 @@ function ParticleField({
         nz = oz + (sz - oz) * eased;
       }
 
-      posArr[i * 3 + 0] = nx;
+      posArr[i * 3]     = nx;
       posArr[i * 3 + 1] = ny;
       posArr[i * 3 + 2] = nz;
 
-      // Brightness: blazing during travel, breathing pulse once settled
+      // Brightness: blazing hot during travel, breathing gold once settled
       const phaseK = k * 0.9;
       let bright: number;
-      if (totalPhase < 2) {
-        bright = 1.5 + 0.2 * Math.sin(t * 14 + phaseK);
-      } else {
-        // Settled: full breathing gold
-        bright = 0.70 + 0.42 * Math.sin(t * 3.2 + phaseK);
-        if (solo) bright *= 1.4;
-      }
-      colorArr[i * 3 + 0] = Math.min(1, 1.0 * bright);
-      colorArr[i * 3 + 1] = Math.min(1, 0.84 * bright);
-      colorArr[i * 3 + 2] = Math.min(1, 0.36 * bright);
-
-      // Flash at crossing point: for 2 stars, briefly boost at midpoint of pass 1
-      if (shoot.indices.length === 2 && totalPhase > 0.45 && totalPhase < 0.6 && !shoot.bounced[k]) {
-        shoot.bounced[k] = true;
-        colorArr[i * 3 + 0] = 1.0;
+      if (inFlash) {
+        // Crossing flash: white-hot burst
+        bright = 2.2 + 0.6 * Math.abs(Math.sin(t * 40 + phaseK));
+        colorArr[i * 3]     = 1.0;
         colorArr[i * 3 + 1] = 1.0;
-        colorArr[i * 3 + 2] = 0.9;
+        colorArr[i * 3 + 2] = Math.min(1, 0.85 + 0.15 * Math.abs(Math.sin(t * 40)));
+        if (!shoot.bounced[k]) shoot.bounced[k] = true;
+      } else if (allSettled) {
+        // Settled: deep breathing gold
+        bright = 0.72 + 0.50 * Math.sin(t * 3.2 + phaseK);
+        if (solo) bright *= 1.35;
+        colorArr[i * 3]     = Math.min(1, 1.0 * bright);
+        colorArr[i * 3 + 1] = Math.min(1, 0.84 * bright);
+        colorArr[i * 3 + 2] = Math.min(1, 0.36 * bright);
+      } else {
+        // In flight: blazing gold-white
+        bright = 1.9 + 0.3 * Math.sin(t * 16 + phaseK);
+        colorArr[i * 3]     = Math.min(1, 1.0 * bright);
+        colorArr[i * 3 + 1] = Math.min(1, 0.88 * bright);
+        colorArr[i * 3 + 2] = Math.min(1, 0.45 * bright);
       }
     }
     posAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;
 
-    // Star size during flight vs settled
-    const allSettled = totalPhase >= 2;
-    if (solo && allSettled) {
-      material.size = 1.1 + Math.sin(t * 3.0) * 0.18;
-    } else if (solo) {
-      material.size = 0.85 + Math.sin(t * 8) * 0.08;
+    // Star size — dramatically larger during the detection animation
+    // Background stars are 4% brightness so only the shooting stars pop.
+    if (inFlash) {
+      // Collision burst: spike to maximum
+      material.size = 4.2 + Math.sin(t * 35) * 0.9;
     } else if (allSettled) {
-      material.size = 0.72 + Math.sin(t * 2.8) * 0.08;
+      material.size = solo
+        ? 2.8 + Math.sin(t * 3.0) * 0.55
+        : 2.2 + Math.sin(t * 2.8) * 0.40;
     } else {
-      material.size = 0.70 + Math.sin(t * 10) * 0.06;
+      // In flight: large and pulsing
+      material.size = solo
+        ? 3.2 + Math.sin(t * 10) * 0.45
+        : 2.8 + Math.sin(t * 12) * 0.40;
     }
   });
 

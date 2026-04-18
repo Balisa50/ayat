@@ -76,10 +76,17 @@ export function SearchBar({
   const [interim, setInterim] = useState("");
   const [voiceLang, setVoiceLang] = useState<VoiceLang>("ar-SA");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  // Tracks the latest committed voice transcript so onend can auto-submit
+  // without relying on stale closure state.
+  const latestFeelingRef = useRef("");
 
   // Debounce timers
   const themeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const askDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep a stable ref to submitAsk so recognition callbacks always call
+  // the version that sees the current verses/asking state.
+  const submitAskRef = useRef<(value: string) => void>(() => {});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -131,6 +138,7 @@ export function SearchBar({
       }
       onDetective(matches, trimmed);
       setFeeling("");
+      latestFeelingRef.current = "";
       setInterim("");
     } catch {
       setAskError("Network hiccup. Try again.");
@@ -139,19 +147,23 @@ export function SearchBar({
     }
   };
 
-  // Theme input change — debounce 800ms, also fires on Enter via form submit
+  // Keep the ref current after every render
+  useEffect(() => { submitAskRef.current = submitAsk; });
+
+  // Theme input change — debounce 1500ms, also fires immediately on Enter
   const handleThemeChange = (value: string) => {
     setQ(value);
     if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
-    themeDebounceRef.current = setTimeout(() => submitTheme(value), 800);
+    themeDebounceRef.current = setTimeout(() => submitTheme(value), 1500);
   };
 
-  // Ask input change — debounce 800ms
+  // Ask input change — debounce 1500ms
   const handleAskChange = (value: string) => {
     setFeeling(value);
+    latestFeelingRef.current = value;
     if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
     if (value.trim()) {
-      askDebounceRef.current = setTimeout(() => submitAsk(value), 800);
+      askDebounceRef.current = setTimeout(() => submitAsk(value), 1500);
     }
   };
 
@@ -179,7 +191,12 @@ export function SearchBar({
         else interimText += first.transcript;
       }
       if (finalText) {
-        setFeeling((prev) => (prev ? prev + " " : "") + finalText.trim());
+        // Update both state and the ref so onend can read the latest value
+        setFeeling((prev) => {
+          const next = (prev ? prev + " " : "") + finalText.trim();
+          latestFeelingRef.current = next;
+          return next;
+        });
         setInterim("");
       } else {
         setInterim(interimText);
@@ -191,6 +208,12 @@ export function SearchBar({
     rec.onend = () => {
       setListening(false);
       setInterim("");
+      // Auto-submit whatever was captured — browser already detected silence
+      const captured = latestFeelingRef.current.trim();
+      if (captured) {
+        // Brief delay so React state has flushed before submitAsk reads it
+        setTimeout(() => submitAskRef.current(captured), 150);
+      }
     };
 
     recognitionRef.current = rec;
@@ -234,7 +257,7 @@ export function SearchBar({
       )}
 
       <div className="mx-auto max-w-xl px-6 pb-8 pointer-events-auto">
-        {/* Mode toggle — font size increased 40% from 10px to 14px */}
+        {/* Mode toggle */}
         <div className="mb-3 flex items-center justify-center gap-4 text-[14px] uppercase tracking-[0.25em] font-serif-fine">
           <button
             onClick={() => setMode("theme")}
@@ -352,6 +375,7 @@ export function SearchBar({
                   type="button"
                   onClick={() => {
                     setFeeling("");
+                    latestFeelingRef.current = "";
                     setInterim("");
                     if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
                   }}
@@ -373,8 +397,8 @@ export function SearchBar({
                 dir={isArabicVoice ? "rtl" : "ltr"}
               >
                 {isArabicVoice
-                  ? "تفضّل · سأُريك ما سمعت. عدّله إن احتجت، ثم اضغط إنتر."
-                  : "Speak now · I'll show you what I heard. Edit if needed, then press enter."}
+                  ? "تفضّل · سأُريك ما سمعت. سيُرسَل تلقائياً عند صمتك."
+                  : "Speak now · will search automatically when you go silent."}
               </p>
             )}
           </form>
