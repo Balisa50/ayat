@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Volume2, VolumeX, ArrowRight, Camera, Sparkles, Film, StopCircle } from "lucide-react";
+import { X, Volume2, VolumeX, ArrowRight, Camera, Sparkles, Film, StopCircle, Repeat } from "lucide-react";
 import type { Verse } from "@/lib/types";
 import { useReminders } from "./Reminders";
 
@@ -122,6 +122,10 @@ export function VerseCard({
   const audioRef        = useRef<HTMLAudioElement | null>(null);
   const rafRef          = useRef<number | null>(null);
   const autoRef         = useRef(false);
+  const repeatRef       = useRef(false);
+
+  // UI state for repeat toggle
+  const [repeatActive, setRepeatActive] = useState(false);
 
   // ── Auto-continue state ───────────────────────────────────────────────
   const [chainVerse, setChainVerse] = useState<Verse | null>(null);
@@ -170,6 +174,8 @@ export function VerseCard({
     setAutoActive(false);
     setAutoStatus(null);
     autoRef.current = false;
+    repeatRef.current = false;
+    setRepeatActive(false);
     setTextVisible(true);
     prefetchDoneRef.current = false;
     skipAudioResetRef.current = false;
@@ -304,6 +310,22 @@ export function VerseCard({
   useEffect(() => {
     onEndedRef.current = () => {
       setCurrentWord(-1);
+
+      // ── Repeat: replay this exact verse, ignore auto-advance ───────────
+      if (repeatRef.current) {
+        const a = audioRef.current;
+        if (a) {
+          a.currentTime = 0;
+          a.play()
+            .then(() => setPlaying(true))
+            .catch(() => {
+              setTimeout(() =>
+                a.play().then(() => setPlaying(true)).catch(() => setPlaying(false)),
+              80);
+            });
+        }
+        return;
+      }
 
       if (!autoRef.current) {
         setPlaying(false);
@@ -658,6 +680,25 @@ export function VerseCard({
                     </option>
                   ))}
                 </select>
+                {/* Repeat toggle */}
+                <button
+                  onClick={() => {
+                    const next = !repeatRef.current;
+                    repeatRef.current = next;
+                    setRepeatActive(next);
+                  }}
+                  disabled={!audioUrl}
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-serif-fine uppercase tracking-[0.2em] transition-colors disabled:opacity-40 ${
+                    repeatActive
+                      ? "border-[#ffd700]/50 text-[#ffd700]"
+                      : "border-white/15 text-white/45 hover:text-white/80 hover:border-white/35"
+                  }`}
+                  aria-label={repeatActive ? "Repeat on — tap to turn off" : "Repeat off — tap to loop this verse"}
+                  title={repeatActive ? "Repeating this verse" : "Repeat this verse"}
+                >
+                  <Repeat className="h-3 w-3" />
+                  {repeatActive ? "Looping" : "Repeat"}
+                </button>
               </div>
             </div>
 
