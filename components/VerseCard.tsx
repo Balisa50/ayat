@@ -116,6 +116,9 @@ export function VerseCard({
 
   const [reciterId, setReciterId] = useState<string>("7");
   const [reciterOpen, setReciterOpen] = useState(false);
+  // Measured position of the trigger button — used to portal-render the dropdown
+  // in exactly the right spot without any overflow/clipping from parent containers.
+  const [dropPos, setDropPos] = useState<{ x: number; y: number; above: boolean } | null>(null);
   const reciterBtnRef = useRef<HTMLButtonElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -630,44 +633,67 @@ export function VerseCard({
                 </p>
               </div>
 
-              {/* Reciter selector + repeat — secondary controls inline */}
+              {/* Reciter + Repeat + Continue — all in one flex-wrap row.
+                  They sit together and naturally flow onto a second line when
+                  the reciter name is long, never forcing a fixed width. */}
               <div className="flex items-center gap-2 flex-wrap mb-1">
-                {/* Custom pill picker — shrinks/grows with the name */}
-                <div className="relative">
-                  <button
-                    ref={reciterBtnRef}
-                    onClick={() => setReciterOpen((o) => !o)}
-                    className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none cursor-pointer whitespace-nowrap"
-                    aria-label="Select reciter"
-                    aria-expanded={reciterOpen}
-                  >
-                    {RECITERS.find((r) => r.id === reciterId)?.label ?? "Reciter"}
-                    <svg width="8" height="5" viewBox="0 0 8 5" fill="none" className={`transition-transform ${reciterOpen ? "rotate-180" : ""}`} aria-hidden="true">
-                      <path d="M1 1L4 4L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </button>
-                  {reciterOpen && (
-                    <>
-                      {/* Click-outside dismissal */}
-                      <div className="fixed inset-0 z-[90]" onClick={() => setReciterOpen(false)} />
-                      <div className="absolute bottom-full left-0 mb-1.5 z-[91] min-w-max rounded-xl border border-white/10 bg-[#06070f]/95 backdrop-blur-xl shadow-2xl py-1 overflow-hidden">
-                        {RECITERS.map((r) => (
-                          <button
-                            key={r.id}
-                            onClick={() => { setReciterId(r.id); setReciterOpen(false); }}
-                            className={`w-full text-left px-3.5 py-2 text-[11px] font-serif-fine whitespace-nowrap transition-colors ${
-                              r.id === reciterId
-                                ? "text-[#ffd700] bg-white/5"
-                                : "text-white/60 hover:text-white hover:bg-white/[0.06]"
-                            }`}
-                          >
-                            {r.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
+                {/* Reciter pill — width = text width, dropdown via portal so it
+                    is never clipped by the card's scroll container */}
+                <button
+                  ref={reciterBtnRef}
+                  onClick={() => {
+                    const btn = reciterBtnRef.current;
+                    if (btn) {
+                      const r = btn.getBoundingClientRect();
+                      const above = r.top > window.innerHeight / 2;
+                      setDropPos({ x: r.left, y: above ? r.top : r.bottom, above });
+                    }
+                    setReciterOpen((o) => !o);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none cursor-pointer whitespace-nowrap"
+                  aria-label="Select reciter"
+                  aria-expanded={reciterOpen}
+                >
+                  {RECITERS.find((r) => r.id === reciterId)?.label ?? "Reciter"}
+                  <svg width="8" height="5" viewBox="0 0 8 5" fill="none" className={`transition-transform duration-150 ${reciterOpen ? "rotate-180" : ""}`} aria-hidden="true">
+                    <path d="M1 1L4 4L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+
+                {/* Portal dropdown — renders on <body> so nothing clips it */}
+                {reciterOpen && dropPos && typeof window !== "undefined" && createPortal(
+                  <>
+                    <div className="fixed inset-0 z-[190]" onClick={() => setReciterOpen(false)} />
+                    <div
+                      className="fixed z-[191] rounded-xl border border-white/10 bg-[#06070f] shadow-2xl py-1 overflow-y-auto"
+                      style={{
+                        left: dropPos.x,
+                        maxHeight: "min(260px, 48vh)",
+                        backdropFilter: "blur(24px)",
+                        WebkitBackdropFilter: "blur(24px)",
+                        minWidth: "max-content",
+                        ...(dropPos.above
+                          ? { bottom: window.innerHeight - dropPos.y + 6 }
+                          : { top: dropPos.y + 6 }),
+                      }}
+                    >
+                      {RECITERS.map((r) => (
+                        <button
+                          key={r.id}
+                          onClick={() => { setReciterId(r.id); setReciterOpen(false); }}
+                          className={`w-full text-left px-4 py-2.5 text-[11px] font-serif-fine whitespace-nowrap transition-colors ${
+                            r.id === reciterId
+                              ? "text-[#ffd700] bg-white/5"
+                              : "text-white/60 hover:text-white hover:bg-white/[0.06]"
+                          }`}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>,
+                  document.body
+                )}
                 {/* Repeat toggle */}
                 <button
                   onClick={() => {
