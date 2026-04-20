@@ -43,6 +43,8 @@ export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, onSelectVers
   return (
     <div className="fixed inset-0" style={{ zIndex: 0 }}>
       <Canvas
+        aria-label="Interactive Quran star field — 6,236 verses as stars. Tap any star to read the verse."
+        role="img"
         camera={{ position: [0, 6, 72], fov: 55, near: 0.1, far: 600 }}
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
@@ -598,9 +600,6 @@ function ParticleField({
     const returnProgress = returning
       ? Math.min(1, (nowSec - shoot.returnStartTime) / RETURN_SECS)
       : 0;
-    // returnDone: when true the stars are back in the galaxy at their origin positions
-    const _returnDone = returning && returnProgress >= 1; void _returnDone;
-
     for (let k = 0; k < shoot.indices.length; k++) {
       const i = shoot.indices[k];
       const lx = shoot.launchXYZ[k * 3];
@@ -728,7 +727,7 @@ function ParticleField({
     const canvas = gl.domElement;
     const onLost = (e: Event) => {
       e.preventDefault();
-      console.warn("[AYAT] WebGL context lost");
+      // WebGL context lost — browser will restore it automatically
     };
     canvas.addEventListener("webglcontextlost", onLost);
     return () => canvas.removeEventListener("webglcontextlost", onLost);

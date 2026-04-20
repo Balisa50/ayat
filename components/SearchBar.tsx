@@ -69,6 +69,7 @@ export function SearchBar({
   const [feeling, setFeeling] = useState("");
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
+  const askErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Speech recognition
   const [listening, setListening] = useState(false);
@@ -97,11 +98,19 @@ export function SearchBar({
     setMicSupported(Boolean(w.SpeechRecognition ?? w.webkitSpeechRecognition));
   }, []);
 
+  // Auto-dismiss ask errors after 5 s
+  const showAskError = (msg: string) => {
+    setAskError(msg);
+    if (askErrorTimerRef.current) clearTimeout(askErrorTimerRef.current);
+    askErrorTimerRef.current = setTimeout(() => setAskError(null), 5000);
+  };
+
   // Clean up debounce timers on unmount
   useEffect(() => {
     return () => {
       if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
       if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
+      if (askErrorTimerRef.current) clearTimeout(askErrorTimerRef.current);
     };
   }, []);
 
@@ -124,16 +133,14 @@ export function SearchBar({
       });
       const d = await r.json();
       if (!r.ok) {
-        setAskError(d.error ?? "Something went wrong.");
+        showAskError(d.error ?? "Something went wrong.");
         return;
       }
       const matches: DetectiveMatch[] = Array.isArray(d.matches)
         ? d.matches
         : [];
       if (matches.length === 0) {
-        setAskError(
-          d.message ?? "No strong match. Try a more specific detail.",
-        );
+        showAskError(d.message ?? "No strong match. Try a more specific detail.");
         return;
       }
       onDetective(matches, trimmed);
@@ -141,7 +148,7 @@ export function SearchBar({
       // They can clear it manually with the X button.
       setInterim("");
     } catch {
-      setAskError("Network hiccup. Try again.");
+      showAskError("Network hiccup. Try again.");
     } finally {
       setAsking(false);
     }

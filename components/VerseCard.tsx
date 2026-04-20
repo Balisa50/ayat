@@ -750,10 +750,20 @@ export function VerseCard({
               ) : (
                 <>
                   {loadingContext && (
-                    <p className="font-serif-fine text-white/50 italic text-sm">Finding where this verse lands…</p>
+                    <div className="space-y-3 animate-pulse">
+                      <div className="h-2 w-24 rounded bg-white/10" />
+                      <div className="h-3 w-full rounded bg-white/[0.07]" />
+                      <div className="h-3 w-5/6 rounded bg-white/[0.07]" />
+                      <div className="h-3 w-4/6 rounded bg-white/[0.07]" />
+                    </div>
                   )}
                   {!loadingContext && sections.length > 0 && (
-                    <>
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                      className="space-y-4"
+                    >
                       {sections.filter((s) => s.key === "SCENE" || s.key === "MEANING" || s.key === "HITS").map(({ key, label, body }) => (
                         <div key={key}>
                           <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-1.5">{label}</div>
@@ -789,7 +799,7 @@ export function VerseCard({
                           )}
                         </div>
                       )}
-                    </>
+                    </motion.div>
                   )}
                   {!loadingContext && !context && (
                     <p className="font-serif-fine text-white/40 text-xs italic">Context unavailable for this verse.</p>
