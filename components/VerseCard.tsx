@@ -671,19 +671,24 @@ export function VerseCard({
                     <div className="fixed inset-0 z-[190]" onClick={() => setReciterOpen(false)} />
                     <div
                       className="fixed z-[191] rounded-xl border border-white/10 bg-[#06070f] shadow-2xl py-1 overflow-y-auto"
-                      style={{
-                        // Right-align to the button's right edge so it never bleeds
-                        // off the right side of the screen.
-                        right: window.innerWidth - dropPos.right,
-                        // Cap width so it never exceeds the screen
-                        maxWidth: "min(260px, calc(100vw - 24px))",
-                        maxHeight: "min(260px, 48vh)",
-                        backdropFilter: "blur(24px)",
-                        WebkitBackdropFilter: "blur(24px)",
-                        ...(dropPos.above
-                          ? { bottom: window.innerHeight - dropPos.y + 6 }
-                          : { top: dropPos.y + 6 }),
-                      }}
+                      style={(() => {
+                        // Ideal position: right-align dropdown to button's right edge.
+                        // Clamp so it never bleeds off either side of the screen.
+                        const MAX_W = 260;
+                        const MARGIN = 12;
+                        const ideal = dropPos.right - MAX_W;
+                        const left = Math.max(MARGIN, Math.min(ideal, window.innerWidth - MAX_W - MARGIN));
+                        return {
+                          left,
+                          maxWidth: MAX_W,
+                          maxHeight: "min(260px, 48vh)",
+                          backdropFilter: "blur(24px)",
+                          WebkitBackdropFilter: "blur(24px)",
+                          ...(dropPos.above
+                            ? { bottom: window.innerHeight - dropPos.y + 6 }
+                            : { top: dropPos.y + 6 }),
+                        };
+                      })()}
                     >
                       {RECITERS.map((r) => (
                         <button
