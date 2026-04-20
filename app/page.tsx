@@ -167,15 +167,14 @@ export default function Home() {
   }, [verses, reminders]);
 
   // ── Star click handler ────────────────────────────────────────────────────
-  // Clear pulse immediately when a pulsed verse is opened — settled stars
-  // would sit directly behind the verse card's backdrop otherwise.
+  // Keep detective pulse alive when a verse is opened so results persist
+  // after the card closes. Only fire the reminder; don't wipe the highlights.
   const handleSelectVerse = useCallback((v: Verse) => {
     if (pulseIds?.has(v.id)) {
       reminders.trigger("detective-hit");
-      clearPulse();
     }
     setSelected(v);
-  }, [pulseIds, reminders, clearPulse]);
+  }, [pulseIds, reminders]);
 
   return (
     <main className="relative h-screen w-screen overflow-hidden cosmos-bg">

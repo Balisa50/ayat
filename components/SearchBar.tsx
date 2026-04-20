@@ -137,8 +137,8 @@ export function SearchBar({
         return;
       }
       onDetective(matches, trimmed);
-      setFeeling("");
-      latestFeelingRef.current = "";
+      // Keep the ask query visible so the user can see what they searched.
+      // They can clear it manually with the X button.
       setInterim("");
     } catch {
       setAskError("Network hiccup. Try again.");

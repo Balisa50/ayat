@@ -18,7 +18,7 @@ const STEPS: StepDef[] = [
   {
     type: "welcome",
     title: "Not an app.\nA universe.",
-    body: "AYAT renders all 6,236 verses of the Quran as a living star field. Each star is a verse — positioned by meaning, not scripture order. Verses that share a theme draw toward each other like constellations.",
+    body: "AYAT renders all 6,236 verses of the Quran as a living star field. Each star is a verse — positioned by meaning, not scripture order. Verses that share a theme draw toward each other like constellations.\n\nBlue stars are Meccan surahs — revealed early, mostly about faith, God, and the soul. Gold stars are Medinan surahs — revealed later, covering community, law, and ethics.",
     sub: "This is an exploration space. Not a full Quran reader. Not a memorisation tool. AYAT is for wandering — and for finding the verse you didn't know you were looking for.",
   },
   {
@@ -39,7 +39,7 @@ const STEPS: StepDef[] = [
     type: "top",
     eyebrow: "Step 3 of 3  ·  Verse Detective",
     title: "Ask. Speak.\nFind it.",
-    body: "Tap Ask in the bar below, then describe a verse you half-remember — a story, a feeling, even a fragment of Arabic.\n\nTap the mic icon to speak: Arabic, English, however it comes out. The detective finds it — no hallucinations, grounded in the real dataset.\n\nNot a chatbot. A detective.",
+    body: "Tap Ask in the bar below, then describe a verse you half-remember — a story, a feeling, even a fragment of Arabic.\n\nTap the mic icon to speak: Arabic, English, however it comes out.\n\nIt finds the verse. Try it.",
     arrowLabel: "Switch to Ask in the bar below ↓",
   },
   {
