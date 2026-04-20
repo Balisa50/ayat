@@ -587,19 +587,13 @@ function ParticleField({
     const allSettled = totalPhase >= 2;
     const inFlash = shoot.indices.length === 2 && totalPhase > 0.42 && totalPhase < 0.68;
 
-    // Track when to start the return-to-galaxy drift
-    if (allSettled && shoot.returnStartTime < 0) {
-      // Will start return after SETTLE_PAUSE seconds from when settled
-      const settledAt = shoot.startTime + PASS_SECS * 2;
-      if (nowSec - settledAt >= SETTLE_PAUSE) {
-        shoot.returnStartTime = nowSec;
-      }
-    }
-
-    const returning = shoot.returnStartTime > 0;
-    const returnProgress = returning
-      ? Math.min(1, (nowSec - shoot.returnStartTime) / RETURN_SECS)
-      : 0;
+    // Return-to-galaxy animation is intentionally disabled.
+    // Sending stars back to their originXYZ buries them inside the sphere of
+    // 6,236 stars — invisible and impossible to tap. Instead, pulsed stars
+    // stay at their settle positions (foreground, clearly visible) until the
+    // user explicitly clears the results with X or a new search.
+    const returning = false;
+    const returnProgress = 0;
     for (let k = 0; k < shoot.indices.length; k++) {
       const i = shoot.indices[k];
       const lx = shoot.launchXYZ[k * 3];
@@ -643,14 +637,8 @@ function ParticleField({
 
       // Per-vertex size: biggest star = most confident, scales down by rank
       const targetSize = shoot.rankSizes[k] ?? 1.2;
-      if (returning) {
-        // Drift back to galaxy but keep stars noticeably large so the user
-        // can still see and tap the other results after closing a verse card.
-        // Lerp from big settled size → 2.8 (clearly visible in the galaxy).
-        const eased = easeInOutCubic(returnProgress);
-        aSizeArr[i] = targetSize + (2.8 - targetSize) * eased;
-      } else if (allSettled) {
-        // Gentle breathing pulse on the settled size
+      if (allSettled) {
+        // Breathe gently at full target size — star stays large and findable
         const breathe = 1 + 0.12 * Math.sin(t * 3.2 + k * 0.9);
         aSizeArr[i] = targetSize * breathe;
       } else {
@@ -668,14 +656,12 @@ function ParticleField({
         colorArr[i * 3 + 1] = 1.0;
         colorArr[i * 3 + 2] = Math.min(1, 0.85 + 0.15 * Math.abs(Math.sin(t * 40)));
         if (!shoot.bounced[k]) shoot.bounced[k] = true;
-      } else if (returning || allSettled) {
-        // Gold — keep full brightness even after returning so stars stay
-        // clearly visible in the galaxy for the user to tap other results.
-        const dimFactor = returning ? (1 - returnProgress * 0.05) : 1; // barely dims
+      } else if (allSettled) {
+        // Gold breathing glow — full brightness, stays settled in foreground
         const conf = pulseScoresRef.current?.get(verses[i].id) ?? 0.7;
         const rankBoost = 0.5 + conf * 1.0;
-        bright = (0.92 + 0.50 * Math.sin(t * 3.2 + phaseK)) * rankBoost * dimFactor;
-        if (solo && !returning) bright *= 1.35;
+        bright = (0.92 + 0.50 * Math.sin(t * 3.2 + phaseK)) * rankBoost;
+        if (solo) bright *= 1.35;
         colorArr[i * 3]     = Math.min(1, 1.0 * bright);
         colorArr[i * 3 + 1] = Math.min(1, 0.84 * bright);
         colorArr[i * 3 + 2] = Math.min(1, 0.36 * bright);
@@ -697,9 +683,8 @@ function ParticleField({
     // Keep it at the pulsing-breathing value from the settle/return phase.
     if (inFlash) {
       material.size = 4.2 + Math.sin(t * 35) * 0.9;
-    } else if (returning || allSettled) {
-      // aSize handles per-vertex scaling; material.size breathes slightly
-      // larger so returned stars stay distinctly visible in the galaxy.
+    } else if (allSettled) {
+      // aSize handles per-vertex scaling; breathe the baseline gently
       material.size = 0.82 + Math.sin(t * 2.8) * 0.08;
     } else {
       // In flight: slightly larger base
