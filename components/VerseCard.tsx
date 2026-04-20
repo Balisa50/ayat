@@ -115,6 +115,8 @@ export function VerseCard({
   const [loadingContext, setLoadingContext] = useState(false);
 
   const [reciterId, setReciterId] = useState<string>("7");
+  const [reciterOpen, setReciterOpen] = useState(false);
+  const reciterBtnRef = useRef<HTMLButtonElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [playing, setPlaying] = useState(false);
@@ -176,6 +178,7 @@ export function VerseCard({
     autoRef.current = false;
     repeatRef.current = false;
     setRepeatActive(false);
+    setReciterOpen(false);
     setTextVisible(true);
     prefetchDoneRef.current = false;
     nextAudioWarmRef.current = false;
@@ -629,18 +632,42 @@ export function VerseCard({
 
               {/* Reciter selector + repeat — secondary controls inline */}
               <div className="flex items-center gap-2 flex-wrap mb-1">
-                <select
-                  value={reciterId}
-                  onChange={(e) => setReciterId(e.target.value)}
-                  className="rounded-full border border-white/15 bg-black/60 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none appearance-none cursor-pointer"
-                  aria-label="Select reciter"
-                >
-                  {RECITERS.map((r) => (
-                    <option key={r.id} value={r.id} className="bg-black text-white normal-case tracking-normal">
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                {/* Custom pill picker — shrinks/grows with the name */}
+                <div className="relative">
+                  <button
+                    ref={reciterBtnRef}
+                    onClick={() => setReciterOpen((o) => !o)}
+                    className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none cursor-pointer whitespace-nowrap"
+                    aria-label="Select reciter"
+                    aria-expanded={reciterOpen}
+                  >
+                    {RECITERS.find((r) => r.id === reciterId)?.label ?? "Reciter"}
+                    <svg width="8" height="5" viewBox="0 0 8 5" fill="none" className={`transition-transform ${reciterOpen ? "rotate-180" : ""}`} aria-hidden="true">
+                      <path d="M1 1L4 4L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                  {reciterOpen && (
+                    <>
+                      {/* Click-outside dismissal */}
+                      <div className="fixed inset-0 z-[90]" onClick={() => setReciterOpen(false)} />
+                      <div className="absolute bottom-full left-0 mb-1.5 z-[91] min-w-max rounded-xl border border-white/10 bg-[#06070f]/95 backdrop-blur-xl shadow-2xl py-1 overflow-hidden">
+                        {RECITERS.map((r) => (
+                          <button
+                            key={r.id}
+                            onClick={() => { setReciterId(r.id); setReciterOpen(false); }}
+                            className={`w-full text-left px-3.5 py-2 text-[11px] font-serif-fine whitespace-nowrap transition-colors ${
+                              r.id === reciterId
+                                ? "text-[#ffd700] bg-white/5"
+                                : "text-white/60 hover:text-white hover:bg-white/[0.06]"
+                            }`}
+                          >
+                            {r.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
                 {/* Repeat toggle */}
                 <button
                   onClick={() => {
