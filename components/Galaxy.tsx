@@ -707,7 +707,13 @@ function ParticleField({
     if (hits.length > 0) {
       const idx = hits[0].index ?? -1;
       if (idx >= 0 && idx < verses.length) {
-        onSelectVerse(verses[idx]);
+        const verse = verses[idx];
+        // When detective results are active, ONLY the highlighted stars respond
+        // to taps — the rest of the galaxy is locked until the user clears.
+        if (pulseRef.current && pulseRef.current.size > 0) {
+          if (!pulseRef.current.has(verse.id)) return;
+        }
+        onSelectVerse(verse);
       }
     }
   };
