@@ -118,7 +118,7 @@ export function VerseCard({
   const [reciterOpen, setReciterOpen] = useState(false);
   // Measured position of the trigger button — used to portal-render the dropdown
   // in exactly the right spot without any overflow/clipping from parent containers.
-  const [dropPos, setDropPos] = useState<{ x: number; y: number; above: boolean } | null>(null);
+  const [dropPos, setDropPos] = useState<{ left: number; right: number; y: number; above: boolean } | null>(null);
   const reciterBtnRef = useRef<HTMLButtonElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -636,7 +636,7 @@ export function VerseCard({
               {/* Reciter + Repeat + Continue — all in one flex-wrap row.
                   They sit together and naturally flow onto a second line when
                   the reciter name is long, never forcing a fixed width. */}
-              <div className="flex items-center gap-2 flex-wrap mb-1">
+              <div className="flex items-center gap-1.5 flex-wrap mb-1">
                 {/* Reciter pill — width = text width, dropdown via portal so it
                     is never clipped by the card's scroll container */}
                 <button
@@ -646,11 +646,16 @@ export function VerseCard({
                     if (btn) {
                       const r = btn.getBoundingClientRect();
                       const above = r.top > window.innerHeight / 2;
-                      setDropPos({ x: r.left, y: above ? r.top : r.bottom, above });
+                      setDropPos({
+                        left: r.left,
+                        right: r.right,
+                        y: above ? r.top : r.bottom,
+                        above,
+                      });
                     }
                     setReciterOpen((o) => !o);
                   }}
-                  className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.18em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none cursor-pointer whitespace-nowrap"
+                  className="flex items-center gap-1 rounded-full border border-white/15 bg-black/60 px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none cursor-pointer whitespace-nowrap"
                   aria-label="Select reciter"
                   aria-expanded={reciterOpen}
                 >
@@ -667,11 +672,14 @@ export function VerseCard({
                     <div
                       className="fixed z-[191] rounded-xl border border-white/10 bg-[#06070f] shadow-2xl py-1 overflow-y-auto"
                       style={{
-                        left: dropPos.x,
+                        // Right-align to the button's right edge so it never bleeds
+                        // off the right side of the screen.
+                        right: window.innerWidth - dropPos.right,
+                        // Cap width so it never exceeds the screen
+                        maxWidth: "min(260px, calc(100vw - 24px))",
                         maxHeight: "min(260px, 48vh)",
                         backdropFilter: "blur(24px)",
                         WebkitBackdropFilter: "blur(24px)",
-                        minWidth: "max-content",
                         ...(dropPos.above
                           ? { bottom: window.innerHeight - dropPos.y + 6 }
                           : { top: dropPos.y + 6 }),
@@ -702,7 +710,7 @@ export function VerseCard({
                     setRepeatActive(next);
                   }}
                   disabled={!audioUrl}
-                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-serif-fine uppercase tracking-[0.2em] transition-colors disabled:opacity-40 ${
+                  className={`flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-serif-fine uppercase tracking-[0.15em] transition-colors disabled:opacity-40 ${
                     repeatActive
                       ? "border-[#ffd700]/50 text-[#ffd700]"
                       : "border-white/15 text-white/45 hover:text-white/80 hover:border-white/35"
@@ -718,14 +726,14 @@ export function VerseCard({
                   <button
                     onClick={handleStartAutoPlay}
                     disabled={!audioUrl}
-                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-white/50 hover:text-white/80 transition-colors disabled:opacity-30"
+                    className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-white/50 hover:text-white/80 transition-colors disabled:opacity-30"
                   >
                     <Volume2 className="h-3 w-3" /> Continue
                   </button>
                 ) : (
                   <button
                     onClick={handleStopAutoPlay}
-                    className="flex items-center gap-1.5 rounded-full border border-[#ffd700]/30 bg-[#ffd700]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-[#ffd700]/80 hover:text-[#ffd700] hover:border-[#ffd700]/60 transition-colors"
+                    className="flex items-center gap-1 rounded-full border border-[#ffd700]/30 bg-[#ffd700]/[0.04] px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-[#ffd700]/80 hover:text-[#ffd700] hover:border-[#ffd700]/60 transition-colors"
                   >
                     <StopCircle className="h-3 w-3" /> Stop
                   </button>
