@@ -22,23 +22,48 @@ interface SearchBarProps {
   onDetective: (matches: DetectiveMatch[], query: string) => void;
 }
 
-const THEME_SUGGESTIONS = [
-  "patience",
-  "mercy",
-  "prayer",
-  "light",
-  "knowledge",
-  "charity",
-  "gratitude",
-  "forgiveness",
+// Full pools — 8 shown at a time, shuffled on every mount so they feel fresh
+const ALL_THEME_SUGGESTIONS = [
+  "patience", "mercy", "prayer", "light", "knowledge", "charity",
+  "gratitude", "forgiveness", "hope", "justice", "paradise", "hellfire",
+  "trust in God", "grief", "repentance", "gratitude", "humility", "creation",
+  "death", "resurrection", "covenant", "guidance", "family", "wealth",
+  "envy", "arrogance", "love", "fear of God", "sin", "nature", "water",
+  "night", "dawn", "truth", "hypocrisy", "steadfastness", "blessings",
+  "trials", "sacrifice", "prophethood", "worship",
 ];
 
-const ASK_SUGGESTIONS = [
+const ALL_ASK_SUGGESTIONS = [
   "the ant warning about Solomon's army",
   "something about iron being sent down",
   "revealed when people accused Aisha",
   "Qul huwa Allahu ahad",
+  "the verse about the pen",
+  "two seas meeting but not mixing",
+  "a man who killed 99 people and sought repentance",
+  "the story of the people of the cave",
+  "God is closer than your jugular vein",
+  "the verse recited at funerals",
+  "the parable of a good word like a good tree",
+  "where it says no soul knows what it will earn tomorrow",
+  "the story of Yusuf being thrown in the well",
+  "throne verse — Ayat al-Kursi",
+  "do not say to those killed in God's cause that they are dead",
+  "God does not burden a soul beyond what it can bear",
+  "and after hardship comes ease",
+  "whoever saves one life it is as if he saved all of mankind",
+  "the verse about the night of decree, Laylat al-Qadr",
+  "the parable of those who spend in God's way like a seed that grows seven ears",
 ];
+
+function pickRandom<T>(arr: T[], n: number): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+}
 
 // ── Web Speech API types ───────────────────────────────────────────────
 type SpeechResult = { transcript: string };
@@ -69,6 +94,10 @@ export function SearchBar({
   const [feeling, setFeeling] = useState("");
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
+
+  // Pick a fresh random subset on every mount so suggestions feel new each visit
+  const [themeSuggestions] = useState(() => pickRandom(ALL_THEME_SUGGESTIONS, 8));
+  const [askSuggestions]   = useState(() => pickRandom(ALL_ASK_SUGGESTIONS, 4));
   const askErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Speech recognition
@@ -413,7 +442,7 @@ export function SearchBar({
 
         {mode === "theme" && !activeQuery && (
           <div className="mt-3 flex flex-wrap justify-center gap-2">
-            {THEME_SUGGESTIONS.map((s) => (
+            {themeSuggestions.map((s) => (
               <button
                 key={s}
                 onClick={() => {
@@ -429,7 +458,7 @@ export function SearchBar({
         )}
         {mode === "ask" && !asking && !feeling && !listening && (
           <div className="mt-3 flex flex-wrap justify-center gap-2">
-            {ASK_SUGGESTIONS.map((s) => (
+            {askSuggestions.map((s) => (
               <button
                 key={s}
                 onClick={() => submitAsk(s)}
