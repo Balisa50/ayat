@@ -644,9 +644,11 @@ function ParticleField({
       // Per-vertex size: biggest star = most confident, scales down by rank
       const targetSize = shoot.rankSizes[k] ?? 1.2;
       if (returning) {
-        // Lerp from big settled size → 1.5 (slightly above normal so it stands out in galaxy)
+        // Drift back to galaxy but keep stars noticeably large so the user
+        // can still see and tap the other results after closing a verse card.
+        // Lerp from big settled size → 2.8 (clearly visible in the galaxy).
         const eased = easeInOutCubic(returnProgress);
-        aSizeArr[i] = targetSize + (1.5 - targetSize) * eased;
+        aSizeArr[i] = targetSize + (2.8 - targetSize) * eased;
       } else if (allSettled) {
         // Gentle breathing pulse on the settled size
         const breathe = 1 + 0.12 * Math.sin(t * 3.2 + k * 0.9);
@@ -667,11 +669,12 @@ function ParticleField({
         colorArr[i * 3 + 2] = Math.min(1, 0.85 + 0.15 * Math.abs(Math.sin(t * 40)));
         if (!shoot.bounced[k]) shoot.bounced[k] = true;
       } else if (returning || allSettled) {
-        // Gold — slightly dimmer during return so it blends back naturally
-        const dimFactor = returning ? (1 - returnProgress * 0.4) : 1;
+        // Gold — keep full brightness even after returning so stars stay
+        // clearly visible in the galaxy for the user to tap other results.
+        const dimFactor = returning ? (1 - returnProgress * 0.05) : 1; // barely dims
         const conf = pulseScoresRef.current?.get(verses[i].id) ?? 0.7;
         const rankBoost = 0.5 + conf * 1.0;
-        bright = (0.72 + 0.50 * Math.sin(t * 3.2 + phaseK)) * rankBoost * dimFactor;
+        bright = (0.92 + 0.50 * Math.sin(t * 3.2 + phaseK)) * rankBoost * dimFactor;
         if (solo && !returning) bright *= 1.35;
         colorArr[i * 3]     = Math.min(1, 1.0 * bright);
         colorArr[i * 3 + 1] = Math.min(1, 0.84 * bright);
@@ -695,8 +698,9 @@ function ParticleField({
     if (inFlash) {
       material.size = 4.2 + Math.sin(t * 35) * 0.9;
     } else if (returning || allSettled) {
-      // aSize handles per-vertex scaling; material.size just breathes gently
-      material.size = 0.72 + Math.sin(t * 2.8) * 0.08;
+      // aSize handles per-vertex scaling; material.size breathes slightly
+      // larger so returned stars stay distinctly visible in the galaxy.
+      material.size = 0.82 + Math.sin(t * 2.8) * 0.08;
     } else {
       // In flight: slightly larger base
       material.size = solo
