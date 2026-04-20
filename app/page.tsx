@@ -48,9 +48,18 @@ export default function Home() {
     } catch { /* localStorage blocked — skip tour */ }
   }, [entryDone, verses]);
 
-  // Tour step 1 → 2: user tapped a star
+  // Tour step 1 → 2: user tapped a star — close the card first so step 2 tip is unobstructed
   useEffect(() => {
-    if (tourStep === 1 && selected !== null) setTourStep(2);
+    if (tourStep === 1 && selected !== null) {
+      // Brief delay so the user sees the card open, then it closes and step 2 begins
+      const t = setTimeout(() => {
+        setSelected(null);
+        setAskReflection(null);
+        setIsDaily(false);
+        setTourStep(2);
+      }, 1800);
+      return () => clearTimeout(t);
+    }
   }, [selected, tourStep]);
 
   // Tour step 2 → 3: user typed a theme
@@ -103,6 +112,8 @@ export default function Home() {
   // ── Daily ayah auto-open (once per device per day) ───────────────────────
   useEffect(() => {
     if (!verses || !entryDone || selected || tourStep >= 0) return;
+    // Never open the daily verse on a first-time visit — let the tour run first.
+    try { if (!localStorage.getItem(TOUR_KEY)) return; } catch {}
     const today = todayKey();
     const last = typeof window !== "undefined" ? localStorage.getItem(DAILY_STORAGE_KEY) : null;
     if (last === today) return;
