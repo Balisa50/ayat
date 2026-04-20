@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Volume2, VolumeX, ArrowRight, Camera, Sparkles, Film, StopCircle, Repeat } from "lucide-react";
+import { X, Volume2, ArrowRight, Sparkles, StopCircle, Repeat } from "lucide-react";
 import type { Verse } from "@/lib/types";
 import { useReminders } from "./Reminders";
+import { FloatingReciteButton } from "./FloatingReciteButton";
 
 // ─── Five-section parser ────────────────────────────────────────────────
 type Section = { key: string; label: string; body: string };
@@ -142,6 +144,8 @@ export function VerseCard({
   const nextSegmentsRef  = useRef<Segment[]>([]);
   const nextVerseRef     = useRef<Verse | null>(null);
   const prefetchDoneRef  = useRef(false);
+  // Tracks whether we've already silently started the pre-fetched audio (warm-start)
+  const nextAudioWarmRef = useRef(false);
 
   // When true, the [currentVerse, reciterId] fetch effect must skip its reset.
   // Set to true immediately before we swap chainVerse during an auto-advance.
@@ -161,10 +165,6 @@ export function VerseCard({
 
   const currentVerse = (chainVerse ?? verse) as Verse;
 
-  const [capturing, setCapturing] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [videoStatus, setVideoStatus] = useState<string | null>(null);
-
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const readFullyTriggeredRef = useRef(false);
 
@@ -178,6 +178,7 @@ export function VerseCard({
     setRepeatActive(false);
     setTextVisible(true);
     prefetchDoneRef.current = false;
+    nextAudioWarmRef.current = false;
     skipAudioResetRef.current = false;
     if (nextAudioRef.current) {
       nextAudioRef.current.pause();
@@ -337,7 +338,8 @@ export function VerseCard({
 
       if (nextV && nextAudio) {
         // ── Zero-gap advance (pre-fetch was ready) ──────────────────
-        nextAudio.volume  = 1;
+        const wasWarm = nextAudioWarmRef.current; // silently started already?
+        nextAudio.volume  = 1;                    // unmute (was 0 if warm)
         nextAudio.onended = () => onEndedRef.current();
         nextAudio.onerror = () => setPlaying(false);
 
@@ -349,7 +351,7 @@ export function VerseCard({
         // always reads the current verse even before React effects commit.
         chainVerseRef.current = nextV;
 
-        // Visual: text fades out for 300ms, content swaps while invisible
+        // Visual: brief fade so the text label updates aren't jarring
         setTextVisible(false);
 
         // Batch all state changes into one render
@@ -364,17 +366,31 @@ export function VerseCard({
         nextSegmentsRef.current = [];
         nextVerseRef.current    = null;
         prefetchDoneRef.current = false;
+        nextAudioWarmRef.current = false;
 
-        // Start playback — stays "playing" with no gap
-        nextAudio.play()
-          .then(() => setPlaying(true))
-          .catch(() => {
-            // play() rejected (rare on mobile) — retry once then give up
-            setTimeout(() => nextAudio.play().then(() => setPlaying(true)).catch(() => setPlaying(false)), 80);
-          });
+        if (wasWarm) {
+          // Pipeline is hot, but we must seek back to 0 — the silent warm-play
+          // already consumed up to 300ms, which would cut the opening syllable.
+          // pause() + currentTime=0 is synchronous; play() fires on a warm pipeline
+          // so startup latency is near-zero.
+          nextAudio.pause();
+          nextAudio.currentTime = 0;
+          nextAudio.play()
+            .then(() => setPlaying(true))
+            .catch(() => {
+              setTimeout(() => nextAudio.play().then(() => setPlaying(true)).catch(() => setPlaying(false)), 20);
+            });
+        } else {
+          // Warm-start missed its window; call play() normally
+          nextAudio.play()
+            .then(() => setPlaying(true))
+            .catch(() => {
+              setTimeout(() => nextAudio.play().then(() => setPlaying(true)).catch(() => setPlaying(false)), 80);
+            });
+        }
 
-        // Text fades back in once content has swapped (~one render later)
-        setTimeout(() => setTextVisible(true), 300);
+        // Text fades back in quickly — audio is already running
+        setTimeout(() => setTextVisible(true), 80);
       } else {
         // ── Fallback (pre-fetch not ready) ──────────────────────────
         setPlaying(false);
@@ -399,7 +415,7 @@ export function VerseCard({
         setChainVerse(nextVFallback);
         setAutoStatus(`${nextVFallback.surahName} · ${nextVFallback.ayah}`);
         prefetchDoneRef.current = false;
-        setTimeout(() => setTextVisible(true), 300);
+        setTimeout(() => setTextVisible(true), 80);
       }
     };
   }); // runs every render — always current, never stale
@@ -434,11 +450,25 @@ export function VerseCard({
         if (idx !== lastIdx) { lastIdx = idx; setCurrentWord(idx); }
       }
 
-      // Kick off pre-fetch at 80% (auto mode only)
+      // Auto mode: pre-fetch early + warm-start to eliminate the inter-verse gap
       if (autoRef.current && a.duration > 0 && !isNaN(a.duration)) {
-        if (a.currentTime / a.duration >= 0.80 && !prefetchDoneRef.current) {
+        const progress  = a.currentTime / a.duration;
+        const remaining = a.duration - a.currentTime;
+
+        // Pre-fetch at 20% so the audio file has plenty of time to download
+        if (progress >= 0.20 && !prefetchDoneRef.current) {
           prefetchDoneRef.current = true;
           triggerPrefetch();
+        }
+
+        // Warm-start: silently begin the pre-fetched audio 0.1 s before end so
+        // the browser audio pipeline is hot when onended fires.
+        // We seek back to 0 in onEndedRef so no audio is lost.
+        if (!nextAudioWarmRef.current && remaining < 0.10 && nextAudioRef.current) {
+          nextAudioWarmRef.current = true;
+          const na = nextAudioRef.current;
+          na.volume = 0;
+          na.play().catch(() => {});
         }
       }
 
@@ -484,7 +514,12 @@ export function VerseCard({
     setAutoActive(true);
     setAutoStatus("Continuing…");
     if (!playing) toggleAudio();
-  }, [playing, toggleAudio]);
+    // Kick off pre-fetch immediately — don't wait for the 20% RAF threshold
+    if (!prefetchDoneRef.current) {
+      prefetchDoneRef.current = true;
+      triggerPrefetch();
+    }
+  }, [playing, toggleAudio, triggerPrefetch]);
 
   const handleStopAutoPlay = useCallback(() => {
     autoRef.current = false;
@@ -501,68 +536,6 @@ export function VerseCard({
     }
     prefetchDoneRef.current = false;
   }, [playing]);
-
-  const handleScreenshot = async () => {
-    if (!currentVerse || capturing) return;
-    setCapturing(true);
-    try {
-      await ensureArabicFontsLoaded();
-      const blob = await screenshotVerseCanvas({ verse: currentVerse, words });
-      const filename = `ayat-${currentVerse.surah}-${currentVerse.ayah}.png`;
-      const file = new File([blob], filename, { type: "image/png" });
-      const nav = navigator as Navigator & {
-        canShare?: (d: { files?: File[] }) => boolean;
-        share?: (d: { files?: File[]; title?: string; text?: string }) => Promise<void>;
-      };
-      if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
-        await nav.share({ files: [file], title: `${currentVerse.surahName} · ${currentVerse.ayah}`, text: "AYAT" });
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 500);
-      }
-      reminders.trigger("share");
-    } catch (e) { console.error("screenshot failed", e); }
-    finally { setCapturing(false); }
-  };
-
-  const handleShareVideo = async () => {
-    if (!verse || !audioUrl || recording) return;
-    setRecording(true);
-    setVideoStatus("Starting…");
-    try {
-      // Font loading and everything else happens inside recordVerseVideo.
-      // Do NOT await anything here before calling it — we need to reach
-      // AudioContext creation while the user-activation context is still alive.
-      const blob = await recordVerseVideo({ verse, words, audioUrl, segments, onStatus: setVideoStatus });
-      setVideoStatus("Processing…");
-      await new Promise((r) => setTimeout(r, 400));
-      const ext = blob.type.includes("mp4") ? "mp4" : "webm";
-      const filename = `ayat-${verse.surah}-${verse.ayah}.${ext}`;
-      const file = new File([blob], filename, { type: blob.type });
-      const nav = navigator as Navigator & {
-        canShare?: (d: { files?: File[] }) => boolean;
-        share?: (d: { files?: File[]; title?: string; text?: string }) => Promise<void>;
-      };
-      if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
-        await nav.share({ files: [file], title: `${verse.surahName} · ${verse.ayah}`, text: "From AYAT" });
-      } else {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 500);
-      }
-      reminders.trigger("share");
-    } catch (e) {
-      console.error("video share failed", e);
-      setVideoStatus("Recording failed · tap to try again");
-    } finally {
-      setTimeout(() => { setVideoStatus(null); setRecording(false); }, 2500);
-    }
-  };
 
   const onBodyScroll = useCallback(() => {
     const el = bodyRef.current;
@@ -581,6 +554,7 @@ export function VerseCard({
     : null;
 
   return (
+    <>
     <AnimatePresence>
       {verse && (
         <motion.div
@@ -625,7 +599,7 @@ export function VerseCard({
             </div>
 
             {/* ── Verse text — only this section fades during transitions ── */}
-            <div style={{ opacity: textVisible ? 1 : 0, transition: "opacity 300ms ease" }}>
+            <div style={{ opacity: textVisible ? 1 : 0, transition: "opacity 80ms ease" }}>
               <div className="min-h-[7rem] mb-6">
                 <p dir="rtl" className="arabic text-right text-[clamp(1.5rem,3.5vw,2.25rem)] text-white leading-relaxed">
                   {words.map((w, i) => (
@@ -653,21 +627,8 @@ export function VerseCard({
                 </p>
               </div>
 
-              {/* Recite controls — directly below the verse, easy reach */}
+              {/* Reciter selector + repeat — secondary controls inline */}
               <div className="flex items-center gap-2 flex-wrap mb-1">
-                <button
-                  onClick={toggleAudio}
-                  disabled={!audioUrl}
-                  className={`flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-[11px] uppercase tracking-[0.2em] font-serif-fine transition-colors disabled:opacity-40 ${
-                    playing
-                      ? "border-[#ffd700]/50 text-[#ffd700] animate-pulse"
-                      : "border-white/20 text-white/70 hover:text-white hover:border-white/50"
-                  }`}
-                  aria-label={playing ? "Pause recitation" : "Play recitation"}
-                >
-                  {playing ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-                  {playing ? "Pause" : "Recite"}
-                </button>
                 <select
                   value={reciterId}
                   onChange={(e) => setReciterId(e.target.value)}
@@ -699,6 +660,23 @@ export function VerseCard({
                   <Repeat className="h-3 w-3" />
                   {repeatActive ? "Looping" : "Repeat"}
                 </button>
+                {/* Continue Surah — alongside other controls, not buried at bottom */}
+                {!autoActive ? (
+                  <button
+                    onClick={handleStartAutoPlay}
+                    disabled={!audioUrl}
+                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-white/50 hover:text-white/80 transition-colors disabled:opacity-30"
+                  >
+                    <Volume2 className="h-3 w-3" /> Continue
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleStopAutoPlay}
+                    className="flex items-center gap-1.5 rounded-full border border-[#ffd700]/30 bg-[#ffd700]/[0.04] px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-[#ffd700]/80 hover:text-[#ffd700] hover:border-[#ffd700]/60 transition-colors"
+                  >
+                    <StopCircle className="h-3 w-3" /> Stop
+                  </button>
+                )}
               </div>
             </div>
 
@@ -767,302 +745,26 @@ export function VerseCard({
               )}
             </div>
 
-            {/* Auto-continue controls */}
-            <div className="mt-6 flex items-center justify-between gap-3">
-              {!autoActive ? (
-                <button
-                  onClick={handleStartAutoPlay}
-                  disabled={!audioUrl}
-                  className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-4 py-2 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-white/50 hover:text-white/80 transition-colors disabled:opacity-30"
-                >
-                  <Volume2 className="h-3 w-3" /> Continue Surah
-                </button>
-              ) : (
-                <button
-                  onClick={handleStopAutoPlay}
-                  className="flex items-center gap-1.5 rounded-full border border-[#ffd700]/30 bg-[#ffd700]/[0.04] px-4 py-2 text-[10px] uppercase tracking-[0.2em] font-serif-fine text-[#ffd700]/80 hover:text-[#ffd700] hover:border-[#ffd700]/60 transition-colors"
-                >
-                  <StopCircle className="h-3 w-3" /> Stop
-                </button>
-              )}
-              {autoStatus && (
-                <p className="font-serif-fine text-[10px] italic text-white/40 animate-pulse">{autoStatus}</p>
-              )}
-            </div>
+            {autoStatus && (
+              <p className="mt-4 font-serif-fine text-[10px] italic text-white/40 animate-pulse text-center">{autoStatus}</p>
+            )}
 
-            {/* Bottom: Video + Screenshot */}
-            <div className="mt-6 pt-6 border-t border-white/10 flex flex-col gap-3">
-              <button
-                onClick={handleShareVideo}
-                disabled={recording || !audioUrl}
-                className="group flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/35 px-4 py-3 text-sm font-serif-fine text-white/80 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Film className="h-4 w-4" />
-                {recording ? (videoStatus ?? "Recording…") : "Share as video"}
-              </button>
-              <button
-                onClick={handleScreenshot}
-                disabled={capturing}
-                className="group flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.01] hover:bg-white/[0.05] hover:border-white/25 px-4 py-2.5 text-xs font-serif-fine text-white/55 hover:text-white/80 transition-colors disabled:opacity-40"
-              >
-                <Camera className="h-3.5 w-3.5" />
-                {capturing ? "Saving…" : "Screenshot"}
-              </button>
-              {!audioUrl && (
-                <p className="text-center font-serif-fine text-[11px] italic text-white/40">Loading recitation…</p>
-              )}
-              {recording && videoStatus && (
-                <p className="text-center font-serif-fine text-[11px] italic text-white/50">{videoStatus}</p>
-              )}
-            </div>
           </motion.div>
         </motion.div>
       )}
     </AnimatePresence>
+    {/* Render FloatingReciteButton outside the transformed motion.div so
+        position:fixed is relative to the viewport, not the animated parent */}
+    {verse !== null && typeof document !== "undefined" &&
+      createPortal(
+        <FloatingReciteButton
+          playing={playing}
+          onToggle={toggleAudio}
+          disabled={!audioUrl}
+        />,
+        document.body,
+      )}
+    </>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-//  SCREENSHOT
-// ═══════════════════════════════════════════════════════════════════════
-interface ScreenshotArgs { verse: Verse; words: string[] }
-
-async function screenshotVerseCanvas({ verse, words }: ScreenshotArgs): Promise<Blob> {
-  const W = 1080, H = 1920;
-  const canvas = document.createElement("canvas");
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext("2d", { alpha: false })!;
-  if (!ctx) throw new Error("canvas 2d unavailable");
-  const AF = `"Amiri","Scheherazade New","Traditional Arabic",serif`;
-  const EF = `Georgia,"Times New Roman",serif`;
-  const M  = 90;
-  const maxW = W - M * 2;
-  function layout(size: number) {
-    ctx.font = `${size}px ${AF}`;
-    const sp = ctx.measureText(" ").width;
-    const lines: Array<{ words: Array<{ word: string; idx: number; width: number }>; totalW: number }> = [{ words: [], totalW: 0 }];
-    let line = lines[0], wLen = 0;
-    for (let i = 0; i < words.length; i++) {
-      const wm = ctx.measureText(words[i]).width;
-      const need = wm + (line.words.length > 0 ? sp : 0);
-      if (wLen + need > maxW && line.words.length > 0) { line.totalW = wLen; lines.push({ words: [], totalW: 0 }); line = lines[lines.length - 1]; wLen = 0; }
-      if (line.words.length > 0) wLen += sp;
-      line.words.push({ word: words[i], idx: i, width: wm }); wLen += wm;
-    }
-    line.totalW = wLen; return lines;
-  }
-  function wrap(text: string, mW: number, font: string) {
-    ctx.font = font;
-    const toks = text.split(/\s+/); const out: string[] = []; let ln = "";
-    for (const t of toks) { const test = ln ? ln + " " + t : t; if (ctx.measureText(test).width > mW && ln) { out.push(ln); ln = t; } else ln = test; }
-    if (ln) out.push(ln); return out;
-  }
-  let sz = 110, lines = layout(sz);
-  while (lines.length > 4 && sz > 64) { sz -= 6; lines = layout(sz); }
-  const lh = Math.round(sz * 1.55);
-  const transFont = `italic 30px ${EF}`, translaFont = `40px ${EF}`;
-  const tlLines = wrap(verse.transliteration, maxW, transFont).slice(0, 3);
-  const trLines = wrap(verse.translation, maxW, translaFont).slice(0, 5);
-  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-  const rng = (n: number) => ((Math.sin(n * 127.1 + 311.7) * 43758.5453) % 1 + 1) % 1;
-  for (let i = 0; i < 120; i++) {
-    ctx.globalAlpha = 0.12 + rng(i) * 0.55; ctx.fillStyle = "#fff";
-    ctx.beginPath(); ctx.arc(rng(i*3)*W, rng(i*3+1)*H, 0.6 + rng(i*3+2)*1.8, 0, Math.PI*2); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  const gY = H * 0.45, glow = ctx.createRadialGradient(W/2, gY, 40, W/2, gY, W*0.85);
-  glow.addColorStop(0,"rgba(90,70,180,0.45)"); glow.addColorStop(0.35,"rgba(40,50,140,0.22)"); glow.addColorStop(0.8,"rgba(0,0,0,0)");
-  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = "#C9A84C"; ctx.font = `500 24px ${EF}`; ctx.textAlign = "right"; ctx.textBaseline = "top";
-  ctx.fillText(`${verse.surahName} · ${verse.ayah}`, W - M, M);
-  const bH = lines.length * lh, startY = gY - bH / 2 + lh * 0.15;
-  ctx.font = `${sz}px ${AF}`; ctx.textBaseline = "alphabetic"; ctx.textAlign = "center"; ctx.direction = "rtl";
-  for (let li = 0; li < lines.length; li++) {
-    const l = lines[li], y = startY + (li + 1) * lh, sp = ctx.measureText(" ").width;
-    let x = W / 2 + l.totalW / 2;
-    ctx.shadowColor = "rgba(255,220,150,0.3)"; ctx.shadowBlur = 14; ctx.fillStyle = "#fff";
-    for (const item of l.words) { ctx.fillText(item.word, x - item.width/2, y); x -= item.width + sp; }
-  }
-  ctx.shadowBlur = 0; ctx.direction = "ltr";
-  ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = transFont; ctx.fillStyle = "#888";
-  let ty = startY + bH + 80;
-  for (const ln of tlLines) { ctx.fillText(ln, W/2, ty); ty += 42; }
-  ctx.font = translaFont; ctx.fillStyle = "rgba(255,255,255,0.96)"; ty += 28;
-  for (const ln of trLines) { ctx.fillText(ln, W/2, ty); ty += 54; }
-  ctx.textAlign = "right"; ctx.textBaseline = "alphabetic"; ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = `500 22px ${EF}`;
-  ctx.fillText("AYAT", W - M, H - M);
-  return new Promise<Blob>((res, rej) => canvas.toBlob((b) => b ? res(b) : rej(new Error("toBlob failed")), "image/png", 1.0));
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-//  VIDEO RECORDER — nuclear reset on every call
-// ═══════════════════════════════════════════════════════════════════════
-interface RecordArgs { verse: Verse; words: string[]; audioUrl: string; segments: Segment[]; onStatus: (s: string) => void }
-let _activeAudioCtx: AudioContext | null = null;
-let _activeStream: MediaStream | null = null;
-let _activeRecorder: MediaRecorder | null = null;
-
-async function recordVerseVideo({ verse, words, audioUrl, segments, onStatus }: RecordArgs): Promise<Blob> {
-  if (typeof MediaRecorder === "undefined") throw new Error("MediaRecorder not supported in this browser.");
-
-  // ── Nuclear reset — synchronous so we stay inside the user-gesture activation window.
-  // Awaiting a setTimeout here would expire the activation, causing audio.play() to be
-  // blocked by autoplay policy (NotAllowedError). We just kick off closes without awaiting.
-  try { _activeRecorder?.stop(); } catch {}
-  _activeRecorder = null;
-  if (_activeStream) { for (const t of _activeStream.getTracks()) { try { t.stop(); } catch {} } _activeStream = null; }
-  if (_activeAudioCtx) { _activeAudioCtx.close().catch(() => {}); _activeAudioCtx = null; }
-
-  // ── Canvas setup ─────────────────────────────────────────────────────────
-  const W = 1080, H = 1920;
-  const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext("2d", { alpha: false })!;
-  if (!ctx) throw new Error("Canvas 2d unavailable.");
-
-  // ── Audio element ─────────────────────────────────────────────────────────
-  const audio = new Audio(); audio.crossOrigin = "anonymous"; audio.preload = "auto"; audio.src = audioUrl;
-
-  // ── AudioContext — created synchronously while still in user-activation context ──
-  type ACtor = typeof AudioContext;
-  const ww = window as unknown as { AudioContext?: ACtor; webkitAudioContext?: ACtor };
-  const Ctor = ww.AudioContext ?? ww.webkitAudioContext;
-  if (!Ctor) throw new Error("AudioContext not supported.");
-  const audioCtx = new Ctor();
-  _activeAudioCtx = audioCtx;
-
-  // Resume AudioContext NOW (still in user-activation context) without awaiting.
-  // By the time we call recorder.start() / audio.play(), the resume will have completed.
-  audioCtx.resume().catch(() => {});
-
-  const source = audioCtx.createMediaElementSource(audio);
-  const dest   = audioCtx.createMediaStreamDestination();
-  source.connect(dest);
-  source.connect(audioCtx.destination);
-
-  // ── Canvas stream + MediaRecorder ─────────────────────────────────────────
-  if (typeof (canvas as HTMLCanvasElement & { captureStream?: () => MediaStream }).captureStream !== "function") {
-    throw new Error("canvas.captureStream() not supported. Try a different browser.");
-  }
-  const canvasStream = canvas.captureStream(30);
-  _activeStream = canvasStream;
-  for (const t of dest.stream.getAudioTracks()) canvasStream.addTrack(t);
-
-  const mimeType = ["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/mp4;codecs=h264,aac","video/mp4","video/webm"]
-    .find((m) => MediaRecorder.isTypeSupported?.(m)) ?? "video/webm";
-  const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 6_000_000, audioBitsPerSecond: 192_000 });
-  _activeRecorder = recorder;
-  const chunks: Blob[] = [];
-
-  // ── Font loading — safe to await now (AudioContext already resumed above) ──
-  onStatus("Preparing…");
-  await ensureArabicFontsLoaded();
-  recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-  type P = { x: number; y: number; r: number; speed: number; phase: number; alpha: number };
-  const particles: P[] = Array.from({ length: 120 }, () => ({ x: Math.random()*W, y: Math.random()*H, r: 0.6+Math.random()*2, speed: 4+Math.random()*12, phase: Math.random()*Math.PI*2, alpha: 0.15+Math.random()*0.65 }));
-  const AF = `"Amiri","Scheherazade New","Traditional Arabic",serif`, EF = `Georgia,"Times New Roman",serif`, M = 90, maxW = W - M*2;
-  type LW = { word: string; idx: number; width: number }; type LL = { words: LW[]; totalW: number };
-  function layoutV(maxWW: number, size: number): LL[] {
-    ctx.font = `${size}px ${AF}`; const sp = ctx.measureText(" ").width;
-    const lines: LL[] = [{ words: [], totalW: 0 }]; let line = lines[0], wLen = 0;
-    for (let i = 0; i < words.length; i++) {
-      const wm = ctx.measureText(words[i]).width, need = wm + (line.words.length > 0 ? sp : 0);
-      if (wLen + need > maxWW && line.words.length > 0) { line.totalW = wLen; lines.push({ words: [], totalW: 0 }); line = lines[lines.length-1]; wLen = 0; }
-      if (line.words.length > 0) wLen += sp;
-      line.words.push({ word: words[i], idx: i, width: wm }); wLen += wm;
-    }
-    line.totalW = wLen; return lines;
-  }
-  function wrapV(text: string, mW: number, font: string) {
-    ctx.font = font; const toks = text.split(/\s+/); const out: string[] = []; let ln = "";
-    for (const t of toks) { const test = ln ? ln+" "+t : t; if (ctx.measureText(test).width > mW && ln) { out.push(ln); ln = t; } else ln = test; }
-    if (ln) out.push(ln); return out;
-  }
-  let sz = 110, lines = layoutV(maxW, sz);
-  while (lines.length > 4 && sz > 64) { sz -= 6; lines = layoutV(maxW, sz); }
-  const lh = Math.round(sz*1.55), tF = `italic 30px ${EF}`, trF = `40px ${EF}`;
-  const tlLines = wrapV(verse.transliteration, maxW, tF).slice(0,3);
-  const trLines = wrapV(verse.translation, maxW, trF).slice(0,5);
-  let t0 = 0;
-  function draw(now: number, cidx: number) {
-    const ts = t0 ? (now-t0)/1000 : 0;
-    ctx.fillStyle="#000"; ctx.fillRect(0,0,W,H);
-    for (const p of particles) {
-      p.y -= p.speed*(1/30); if (p.y < -5) { p.y = H+5; p.x = Math.random()*W; }
-      ctx.globalAlpha = p.alpha*(0.5+0.5*Math.sin(ts*2+p.phase)); ctx.fillStyle="#fff";
-      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
-    }
-    ctx.globalAlpha=1;
-    const gY=H*0.45; const glow=ctx.createRadialGradient(W/2,gY,40,W/2,gY,W*0.85);
-    glow.addColorStop(0,"rgba(90,70,180,0.45)"); glow.addColorStop(0.35,"rgba(40,50,140,0.22)"); glow.addColorStop(0.8,"rgba(0,0,0,0)");
-    ctx.fillStyle=glow; ctx.fillRect(0,0,W,H);
-    ctx.fillStyle="#C9A84C"; ctx.font=`500 24px ${EF}`; ctx.textAlign="right"; ctx.textBaseline="top";
-    ctx.fillText(`${verse.surahName} · ${verse.ayah}`,W-M,M);
-    const bH=lines.length*lh, sY=gY-bH/2+lh*0.15;
-    ctx.font=`${sz}px ${AF}`; ctx.textBaseline="alphabetic"; ctx.textAlign="center"; ctx.direction="rtl";
-    const pulse=0.75+0.25*Math.sin(ts*6);
-    for (let li=0; li<lines.length; li++) {
-      const l=lines[li], y=sY+(li+1)*lh, sp=ctx.measureText(" ").width; let x=W/2+l.totalW/2;
-      for (const item of l.words) {
-        const active=item.idx===cidx;
-        if (active) { ctx.shadowColor=`rgba(255,215,100,${0.95*pulse})`; ctx.shadowBlur=50*pulse; ctx.fillStyle="#FFE27A"; }
-        else { ctx.shadowColor="rgba(255,220,150,0.35)"; ctx.shadowBlur=14; ctx.fillStyle="#fff"; }
-        ctx.fillText(item.word,x-item.width/2,y); x-=item.width+sp;
-      }
-    }
-    ctx.shadowBlur=0; ctx.direction="ltr";
-    ctx.textAlign="center"; ctx.textBaseline="top"; ctx.font=tF; ctx.fillStyle="#888";
-    let ty=sY+bH+80; for (const ln of tlLines) { ctx.fillText(ln,W/2,ty); ty+=42; }
-    ctx.font=trF; ctx.fillStyle="rgba(255,255,255,0.96)"; ty+=28;
-    for (const ln of trLines) { ctx.fillText(ln,W/2,ty); ty+=54; }
-    ctx.textAlign="right"; ctx.textBaseline="alphabetic"; ctx.fillStyle="rgba(255,255,255,0.55)"; ctx.font=`500 22px ${EF}`;
-    ctx.fillText("AYAT",W-M,H-M);
-  }
-  draw(performance.now(), -1);
-  onStatus("Recording soon…");
-  return new Promise<Blob>((resolve, reject) => {
-    let stopped=false, started=false, rafId=0, settled=false;
-    const ok=(v:Blob)=>{if(!settled){settled=true;resolve(v);}};
-    const fail=(e:Error)=>{if(!settled){settled=true;reject(e);}};
-    const cleanup=()=>{
-      try{cancelAnimationFrame(rafId);}catch{}
-      try{audio.pause();audio.src="";}catch{}
-      try{source.disconnect();dest.disconnect();}catch{}
-      try{for(const tr of canvasStream.getTracks())tr.stop();}catch{}
-      audioCtx.close().catch(()=>{}); _activeAudioCtx=null; _activeStream=null; _activeRecorder=null;
-    };
-    recorder.onstop=()=>setTimeout(()=>{cleanup();ok(new Blob(chunks,{type:mimeType}));},120);
-    recorder.onerror=(ev)=>{cleanup();fail(new Error(`recorder error: ${(ev as Event).type}`));};
-    const onReady=async()=>{
-      // Guard: both canplaythrough and loadeddata can fire — only start once
-      if(started) return;
-      started=true;
-      try {
-        if(canvasStream.getTracks().length===0)throw new Error("canvas stream has no tracks");
-        if(audioCtx.state==="closed")throw new Error("AudioContext closed");
-        await audioCtx.resume();
-        recorder.start(100);
-        await audio.play();
-        t0=performance.now();
-        onStatus("Recording…");
-        const render=()=>{ if(stopped)return; draw(performance.now(),activeWordAt(segments,audio.currentTime*1000)); rafId=requestAnimationFrame(render); };
-        rafId=requestAnimationFrame(render);
-      } catch(err){fail(err instanceof Error?err:new Error(String(err)));}
-    };
-    // Listen on both events; the guard above ensures onReady only runs once.
-    // canplaythrough fires when the browser has buffered enough to play through.
-    // loadeddata fires earlier (readyState >= 2) and acts as a faster fallback.
-    audio.addEventListener("canplaythrough",onReady,{once:true});
-    audio.addEventListener("loadeddata",onReady,{once:true});
-    // Timeout fallback: if neither fires within 12s, abort cleanly
-    const loadTimeout=setTimeout(()=>fail(new Error("Audio took too long to load — try again.")),12000);
-    audio.addEventListener("ended",()=>{
-      clearTimeout(loadTimeout);
-      if(stopped)return;
-      stopped=true;
-      onStatus("Processing…");
-      setTimeout(()=>{try{recorder.stop();}catch{}},250);
-    },{once:true});
-    audio.addEventListener("error",()=>{clearTimeout(loadTimeout);fail(new Error("Audio load failed — check your connection."));},{once:true});
-    try{audio.load();}catch{}
-  });
-}

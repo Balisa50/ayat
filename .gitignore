@@ -14,3 +14,5 @@ pipeline/data/verses_with_coords.json
 __pycache__/
 *.pyc
 pipeline/*_log.txt
+
+.vercel

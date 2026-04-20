@@ -1,67 +1,54 @@
 "use client";
 
 import { useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 export const TOUR_KEY = "ayat:tour:v1";
 export const TOUR_STEPS = 5; // 0=welcome 1=galaxy 2=theme 3=ask 4=done
 
 // ── Step definitions ───────────────────────────────────────────────────────
 
-type StepDef = {
-  type: "welcome" | "tip" | "toast";
-  /** Where the tip card sits. "center" = middle of screen. "low" = above search bar. */
-  tipPos?: "center" | "low";
-  eyebrow?: string;
-  title: string;
-  body: string;
-  sub?: string;
-  actionHint?: string;
-  /** Show a downward arrow pointing at the search bar */
-  arrowDown?: boolean;
-};
+type StepDef =
+  | { type: "welcome"; title: string; body: string; sub: string }
+  | { type: "pill";    eyebrow: string; title: string; sub: string; hint: string }
+  | { type: "top";     eyebrow: string; title: string; body: string; arrowLabel: string }
+  | { type: "toast";   title: string };
 
 const STEPS: StepDef[] = [
   {
     type: "welcome",
     title: "Not an app.\nA universe.",
-    body: "AYAT renders all 6,236 verses of the Quran as a living star field. Each star is a verse — positioned by meaning, not scripture order. Verses that speak of the same things draw toward each other like constellations.",
-    sub: "This is an exploration space. Not a full Quran reader. Not a memorisation tool. Not a tafsir database — those have better homes. AYAT is for wandering, and for finding the verse you didn't know you were looking for.",
+    body: "AYAT renders all 6,236 verses of the Quran as a living star field. Each star is a verse — positioned by meaning, not scripture order. Verses that share a theme draw toward each other like constellations.",
+    sub: "This is an exploration space. Not a full Quran reader. Not a memorisation tool. AYAT is for wandering — and for finding the verse you didn't know you were looking for.",
   },
   {
-    type: "tip",
-    tipPos: "center",
-    eyebrow: "The Galaxy",
-    title: "Each star is a verse.",
-    body: "Blue stars are Meccan revelations — earlier, philosophical, intimate.\nGold stars are Medinan — communal, legal, historical.\n\nDrag to orbit. Scroll or pinch to zoom.",
-    actionHint: "Tap any star to continue →",
+    type: "pill",
+    eyebrow: "Step 1 of 3",
+    title: "Tap any star.",
+    sub: "Blue = Meccan · Gold = Medinan · Drag to orbit · Pinch to zoom",
+    hint: "The galaxy is live — go ahead and tap one",
   },
   {
-    type: "tip",
-    tipPos: "low",
-    eyebrow: "Theme Search",
+    type: "top",
+    eyebrow: "Step 2 of 3  ·  Theme Search",
     title: "Search by meaning,\nnot keywords.",
-    body: "Type a theme — FORGIVENESS, PATIENCE, LIGHT, JUSTICE — and the galaxy dims everything except verses that carry that meaning.\n\nIt reads intent. Not exact words.",
-    actionHint: "Type a theme in the bar below to continue",
-    arrowDown: true,
+    body: "Type a theme in the bar below — FORGIVENESS, PATIENCE, LIGHT, GRIEF — and the galaxy dims everything except the verses that carry that meaning.\n\nIt reads intent, not exact words. Try it.",
+    arrowLabel: "The search bar is right below ↓",
   },
   {
-    type: "tip",
-    tipPos: "low",
-    eyebrow: "Verse Detective",
-    title: "Describe.\nDon't search.",
-    body: "Tap Ask in the search bar below. Describe a verse you half-remember — a feeling, a story from the prophets, a phrase. The AI detective finds it, grounded in the real dataset.",
-    actionHint: "Use Ask below to continue",
-    arrowDown: true,
+    type: "top",
+    eyebrow: "Step 3 of 3  ·  Verse Detective",
+    title: "Ask. Speak.\nFind it.",
+    body: "Tap Ask in the bar below, then describe a verse you half-remember — a story, a feeling, even a fragment of Arabic.\n\nTap the mic icon to speak: Arabic, English, however it comes out. The detective finds it — no hallucinations, grounded in the real dataset.\n\nNot a chatbot. A detective.",
+    arrowLabel: "Switch to Ask in the bar below ↓",
   },
   {
     type: "toast",
     title: "The galaxy is yours.",
-    body: "",
   },
 ];
 
-// ── Props ──────────────────────────────────────────────────────────────────
+// ── Root ───────────────────────────────────────────────────────────────────
 
 interface TourOverlayProps {
   step: number;
@@ -73,67 +60,54 @@ export function TourOverlay({ step, onNext, onEnd }: TourOverlayProps) {
   const def = STEPS[step];
   if (!def) return null;
 
-  if (def.type === "welcome") return <WelcomeStep def={def} onNext={onNext} />;
-  if (def.type === "tip")     return <TipStep def={def} onNext={onNext} onEnd={onEnd} />;
-  if (def.type === "toast")   return <ToastStep def={def} onEnd={onEnd} />;
-  return null;
+  switch (def.type) {
+    case "welcome": return <WelcomeStep def={def} onNext={onNext} />;
+    case "pill":    return <PillStep    def={def} onNext={onNext} onEnd={onEnd} />;
+    case "top":     return <TopStep     def={def} onNext={onNext} onEnd={onEnd} />;
+    case "toast":   return <ToastStep   def={def} onEnd={onEnd} />;
+  }
 }
+
+// ── Shared font style ──────────────────────────────────────────────────────
+const SERIF: React.CSSProperties = {
+  fontFamily: "'Cormorant Garamond', Georgia, serif",
+};
 
 // ── Welcome ────────────────────────────────────────────────────────────────
 
-function WelcomeStep({ def, onNext }: { def: StepDef; onNext: () => void }) {
+function WelcomeStep({ def, onNext }: { def: Extract<StepDef, { type: "welcome" }>; onNext: () => void }) {
   return (
     <motion.div
-      key="welcome"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.6 }}
+      transition={{ duration: 0.7 }}
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 70,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
+        position: "fixed", inset: 0, zIndex: 70,
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
         textAlign: "center",
         padding: "2rem 1.5rem",
-        background: "radial-gradient(ellipse at 50% 40%, rgba(5,6,14,0.93) 0%, rgba(3,4,10,0.97) 100%)",
+        background: "radial-gradient(ellipse at 50% 38%, rgba(5,6,14,0.92) 0%, rgba(3,4,10,0.97) 100%)",
         overflowY: "auto",
       }}
     >
-      {/* Logo mark */}
+      {/* Brand */}
       <motion.div
-        initial={{ opacity: 0, letterSpacing: "0.6em" }}
+        initial={{ opacity: 0, letterSpacing: "0.8em" }}
         animate={{ opacity: 1, letterSpacing: "0.35em" }}
-        transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
-        style={{
-          fontFamily: "'Cormorant Garamond', Georgia, serif",
-          fontSize: "0.75rem",
-          color: "rgba(245,215,100,0.65)",
-          textTransform: "uppercase",
-          marginBottom: "2rem",
-        }}
+        transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}
+        style={{ ...SERIF, fontSize: "0.7rem", color: "rgba(245,215,100,0.6)", textTransform: "uppercase", marginBottom: "2rem" }}
       >
         A &nbsp; Y &nbsp; A &nbsp; T
       </motion.div>
 
       {/* Headline */}
       <motion.h1
-        initial={{ opacity: 0, y: 18 }}
+        initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5, duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-        style={{
-          fontFamily: "'Cormorant Garamond', Georgia, serif",
-          fontSize: "clamp(1.75rem, 6vw, 3.5rem)",
-          fontWeight: 400,
-          color: "rgba(255,255,255,0.96)",
-          lineHeight: 1.1,
-          marginBottom: "1.5rem",
-          whiteSpace: "pre-line",
-          maxWidth: "600px",
-        }}
+        style={{ ...SERIF, fontSize: "clamp(1.85rem, 7vw, 3.75rem)", fontWeight: 400, color: "rgba(255,255,255,0.97)", lineHeight: 1.1, marginBottom: "1.5rem", whiteSpace: "pre-line", maxWidth: 560 }}
       >
         {def.title}
       </motion.h1>
@@ -142,66 +116,31 @@ function WelcomeStep({ def, onNext }: { def: StepDef; onNext: () => void }) {
       <motion.p
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 1.3, duration: 1.0 }}
-        style={{
-          fontFamily: "'Cormorant Garamond', Georgia, serif",
-          fontSize: "clamp(0.875rem, 2.2vw, 1rem)",
-          color: "rgba(255,255,255,0.65)",
-          lineHeight: 1.75,
-          maxWidth: "480px",
-          marginBottom: "1.25rem",
-        }}
+        transition={{ delay: 1.25, duration: 1.1 }}
+        style={{ ...SERIF, fontSize: "clamp(0.875rem, 2.3vw, 1rem)", color: "rgba(255,255,255,0.62)", lineHeight: 1.8, maxWidth: 480, marginBottom: "1.25rem" }}
       >
         {def.body}
       </motion.p>
 
       {/* Sub */}
-      {def.sub && (
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 2.0, duration: 1.0 }}
-          style={{
-            fontFamily: "'Cormorant Garamond', Georgia, serif",
-            fontSize: "clamp(0.75rem, 1.8vw, 0.875rem)",
-            color: "rgba(255,255,255,0.35)",
-            lineHeight: 1.8,
-            maxWidth: "460px",
-            marginBottom: "2.5rem",
-            fontStyle: "italic",
-          }}
-        >
-          {def.sub}
-        </motion.p>
-      )}
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 2.0, duration: 1.1 }}
+        style={{ ...SERIF, fontSize: "clamp(0.75rem, 1.9vw, 0.875rem)", color: "rgba(255,255,255,0.32)", lineHeight: 1.9, maxWidth: 460, marginBottom: "2.75rem", fontStyle: "italic" }}
+      >
+        {def.sub}
+      </motion.p>
 
       {/* CTA */}
       <motion.button
-        initial={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 2.8, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ delay: 2.85, duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
         onClick={onNext}
-        style={{
-          fontFamily: "'Cormorant Garamond', Georgia, serif",
-          fontSize: "0.8125rem",
-          letterSpacing: "0.2em",
-          textTransform: "uppercase",
-          color: "rgba(245,215,100,0.9)",
-          background: "rgba(245,215,100,0.06)",
-          border: "1px solid rgba(245,215,100,0.3)",
-          borderRadius: "100px",
-          padding: "0.75rem 2.25rem",
-          cursor: "pointer",
-          transition: "all 0.2s ease",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "rgba(245,215,100,0.13)";
-          e.currentTarget.style.borderColor = "rgba(245,215,100,0.55)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "rgba(245,215,100,0.06)";
-          e.currentTarget.style.borderColor = "rgba(245,215,100,0.3)";
-        }}
+        whileHover={{ scale: 1.04 }}
+        whileTap={{ scale: 0.97 }}
+        style={{ ...SERIF, fontSize: "0.8125rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(245,215,100,0.9)", background: "rgba(245,215,100,0.07)", border: "1px solid rgba(245,215,100,0.3)", borderRadius: "100px", padding: "0.8rem 2.5rem", cursor: "pointer" }}
       >
         Show me
       </motion.button>
@@ -209,241 +148,230 @@ function WelcomeStep({ def, onNext }: { def: StepDef; onNext: () => void }) {
   );
 }
 
-// ── Tip ────────────────────────────────────────────────────────────────────
-// IMPORTANT: The outer <div> handles fixed positioning + centering transform.
-// The inner <motion.div> handles ONLY the entrance animation (no transform: translate).
-// This prevents Framer Motion's animation transforms from overwriting the centering transform.
+// ── Pill (step 1 — tap a star) ─────────────────────────────────────────────
+// Galaxy is FULLY VISIBLE and interactive. Only a small pill floats at the top.
+// Overlay is nearly invisible so nothing is blocked.
 
-function TipStep({
+function PillStep({
   def,
   onNext,
   onEnd,
 }: {
-  def: StepDef;
+  def: Extract<StepDef, { type: "pill" }>;
   onNext: () => void;
   onEnd: () => void;
 }) {
-  const isLow = def.tipPos === "low";
-
-  // Outer wrapper: handles fixed positioning. No animation on this element.
-  const wrapperStyle: React.CSSProperties = isLow
-    ? {
-        position: "fixed",
-        bottom: "clamp(120px, 22vh, 180px)",
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 72,
-        width: "min(400px, calc(100vw - 2rem))",
-      }
-    : {
-        position: "fixed",
-        top: "50%",
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        zIndex: 72,
-        width: "min(400px, calc(100vw - 2rem))",
-      };
-
   return (
     <>
-      {/* Dimming overlay — click-through so user can interact with the app */}
+      {/* Near-invisible overlay — just enough to signal "guide is active"; galaxy still clickable */}
       <div
         style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(0,0,0,0.55)",
-          zIndex: 71,
+          position: "fixed", inset: 0, zIndex: 71,
+          background: "rgba(0,0,0,0.18)",
           pointerEvents: "none",
         }}
       />
 
-      {/* Positioning wrapper (no animation transforms here) */}
-      <div style={wrapperStyle}>
-        {/* Animated card — only y/scale/opacity; no translate */}
+      {/* Floating pill — top-center */}
+      <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)", width: "min(380px, calc(100vw - 2rem))" }}>
+        <motion.div
+          initial={{ opacity: 0, y: -18, scale: 0.94 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          style={{
+            borderRadius: "20px",
+            border: "1px solid rgba(255,255,255,0.12)",
+            background: "rgba(6,7,15,0.88)",
+            backdropFilter: "blur(24px)",
+            WebkitBackdropFilter: "blur(24px)",
+            padding: "1rem 1.125rem 0.875rem",
+            boxShadow: "0 12px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
+          }}
+        >
+          {/* Top row: eyebrow + skip */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+            <span style={{ ...SERIF, fontSize: "0.6rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(245,215,100,0.55)" }}>
+              {def.eyebrow}
+            </span>
+            <button
+              onClick={onEnd}
+              style={{ ...SERIF, fontSize: "0.6rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.2)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+            >
+              skip tour
+            </button>
+          </div>
+
+          {/* Title */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.625rem", marginBottom: "0.375rem" }}>
+            {/* Pulsing tap indicator */}
+            <span style={{ position: "relative", flexShrink: 0, width: 28, height: 28 }}>
+              <span style={{
+                position: "absolute", inset: 0, borderRadius: "50%",
+                background: "rgba(245,215,100,0.15)",
+                animation: "tap-ring 1.6s ease-out infinite",
+              }} />
+              <span style={{
+                position: "absolute", inset: "6px", borderRadius: "50%",
+                background: "rgba(245,215,100,0.65)",
+                animation: "tap-dot 1.6s ease-in-out infinite",
+              }} />
+            </span>
+            <h2 style={{ ...SERIF, fontSize: "clamp(1.1rem, 4vw, 1.375rem)", fontWeight: 400, color: "rgba(255,255,255,0.95)", margin: 0 }}>
+              {def.title}
+            </h2>
+          </div>
+
+          {/* Sub */}
+          <p style={{ ...SERIF, fontSize: "0.75rem", color: "rgba(255,255,255,0.38)", margin: "0 0 0.75rem", lineHeight: 1.5, paddingLeft: "2.25rem" }}>
+            {def.sub}
+          </p>
+
+          {/* Hint row */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: "0.45rem",
+            padding: "0.45rem 0.75rem",
+            borderRadius: "8px",
+            background: "rgba(245,215,100,0.05)",
+            border: "1px solid rgba(245,215,100,0.12)",
+          }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
+              background: "rgba(245,215,100,0.8)",
+              animation: "pulse-dot 2s ease-in-out infinite",
+            }} />
+            <span style={{ ...SERIF, fontSize: "0.775rem", color: "rgba(245,215,100,0.65)", fontStyle: "italic" }}>
+              {def.hint}
+            </span>
+          </div>
+        </motion.div>
+      </div>
+
+      <style>{`
+        @keyframes tap-ring {
+          0%   { transform: scale(0.6); opacity: 0.9; }
+          100% { transform: scale(2.2); opacity: 0; }
+        }
+        @keyframes tap-dot {
+          0%, 100% { transform: scale(1);    opacity: 0.8; }
+          50%       { transform: scale(0.75); opacity: 1; }
+        }
+        @keyframes pulse-dot {
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50%       { opacity: 1;   transform: scale(1.5); }
+        }
+        @keyframes arrow-drop {
+          0%, 100% { transform: translateY(0);   opacity: 0.55; }
+          50%       { transform: translateY(6px); opacity: 1; }
+        }
+      `}</style>
+    </>
+  );
+}
+
+// ── Top card (steps 2 & 3 — search bar interactions) ──────────────────────
+// Card lives at the TOP of the screen.
+// Overlay fades from dark (top) to transparent (bottom) so the search bar
+// is completely visible and tappable.
+
+function TopStep({
+  def,
+  onNext,
+  onEnd,
+}: {
+  def: Extract<StepDef, { type: "top" }>;
+  onNext: () => void;
+  onEnd: () => void;
+}) {
+  return (
+    <>
+      {/* Gradient overlay: dark at top, clears at bottom so search bar shows */}
+      <div
+        style={{
+          position: "fixed", inset: 0, zIndex: 71,
+          background: "linear-gradient(to bottom, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.72) 55%, rgba(0,0,0,0.1) 80%, rgba(0,0,0,0) 100%)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Card — top of screen, full width minus margin */}
+      <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)", width: "min(420px, calc(100vw - 2rem))" }}>
         <motion.div
           key={def.eyebrow}
-          initial={{ opacity: 0, y: isLow ? 12 : -8, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.97 }}
-          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           style={{
-            borderRadius: "16px",
+            borderRadius: "18px",
             border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(7,8,16,0.92)",
-            backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            padding: "1.375rem 1.5rem 1.25rem",
-            boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
+            background: "rgba(6,7,15,0.92)",
+            backdropFilter: "blur(22px)",
+            WebkitBackdropFilter: "blur(22px)",
+            padding: "1.125rem 1.25rem 1rem",
+            boxShadow: "0 16px 52px rgba(0,0,0,0.65)",
           }}
         >
           {/* Eyebrow */}
-          {def.eyebrow && (
-            <div
-              style={{
-                fontFamily: "'Cormorant Garamond', Georgia, serif",
-                fontSize: "0.625rem",
-                letterSpacing: "0.22em",
-                textTransform: "uppercase",
-                color: "rgba(245,215,100,0.65)",
-                marginBottom: "0.5rem",
-              }}
-            >
-              {def.eyebrow}
-            </div>
-          )}
+          <div style={{ ...SERIF, fontSize: "0.6rem", letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(245,215,100,0.55)", marginBottom: "0.45rem" }}>
+            {def.eyebrow}
+          </div>
 
           {/* Title */}
-          <h2
-            style={{
-              fontFamily: "'Cormorant Garamond', Georgia, serif",
-              fontSize: "clamp(1.125rem, 4vw, 1.5rem)",
-              fontWeight: 400,
-              color: "rgba(255,255,255,0.95)",
-              lineHeight: 1.2,
-              marginBottom: "0.875rem",
-              whiteSpace: "pre-line",
-            }}
-          >
+          <h2 style={{ ...SERIF, fontSize: "clamp(1.1rem, 4.5vw, 1.5rem)", fontWeight: 400, color: "rgba(255,255,255,0.96)", lineHeight: 1.15, marginBottom: "0.75rem", whiteSpace: "pre-line" }}>
             {def.title}
           </h2>
 
           {/* Body */}
-          <p
-            style={{
-              fontFamily: "'Cormorant Garamond', Georgia, serif",
-              fontSize: "clamp(0.8125rem, 2vw, 0.9rem)",
-              color: "rgba(255,255,255,0.58)",
-              lineHeight: 1.7,
-              whiteSpace: "pre-line",
-              marginBottom: "1rem",
-            }}
-          >
+          <p style={{ ...SERIF, fontSize: "clamp(0.8rem, 2.1vw, 0.875rem)", color: "rgba(255,255,255,0.55)", lineHeight: 1.72, whiteSpace: "pre-line", marginBottom: "0.875rem" }}>
             {def.body}
           </p>
-
-          {/* Action hint + arrow */}
-          {def.actionHint && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                marginBottom: "1rem",
-                padding: "0.5rem 0.75rem",
-                borderRadius: "8px",
-                background: "rgba(245,215,100,0.06)",
-                border: "1px solid rgba(245,215,100,0.15)",
-              }}
-            >
-              <span
-                style={{
-                  display: "inline-block",
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "rgba(245,215,100,0.8)",
-                  animation: "tip-pulse 1.8s ease-in-out infinite",
-                  flexShrink: 0,
-                }}
-              />
-              <span
-                style={{
-                  fontFamily: "'Cormorant Garamond', Georgia, serif",
-                  fontSize: "0.8rem",
-                  color: "rgba(245,215,100,0.75)",
-                  fontStyle: "italic",
-                  lineHeight: 1.4,
-                }}
-              >
-                {def.actionHint}
-              </span>
-            </div>
-          )}
 
           {/* Footer */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <button
               onClick={onEnd}
-              style={{
-                fontFamily: "'Cormorant Garamond', Georgia, serif",
-                fontSize: "0.6875rem",
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-                color: "rgba(255,255,255,0.22)",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: "0.375rem 0",
-                transition: "color 0.15s",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.45)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.22)")}
+              style={{ ...SERIF, fontSize: "0.6rem", letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.2)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
             >
-              End tour
+              end tour
             </button>
             <button
               onClick={onNext}
-              style={{
-                fontFamily: "'Cormorant Garamond', Georgia, serif",
-                fontSize: "0.6875rem",
-                letterSpacing: "0.14em",
-                textTransform: "uppercase",
-                color: "rgba(245,215,100,0.75)",
-                background: "rgba(245,215,100,0.07)",
-                border: "1px solid rgba(245,215,100,0.2)",
-                borderRadius: "100px",
-                padding: "0.375rem 1rem",
-                cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(245,215,100,0.14)";
-                e.currentTarget.style.borderColor = "rgba(245,215,100,0.4)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "rgba(245,215,100,0.07)";
-                e.currentTarget.style.borderColor = "rgba(245,215,100,0.2)";
-              }}
+              style={{ ...SERIF, fontSize: "0.65rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(245,215,100,0.8)", background: "rgba(245,215,100,0.07)", border: "1px solid rgba(245,215,100,0.22)", borderRadius: "100px", padding: "0.35rem 1rem", cursor: "pointer" }}
             >
-              Skip →
+              skip →
             </button>
           </div>
         </motion.div>
 
-        {/* Downward arrow pointing at search bar */}
-        {def.arrowDown && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              marginTop: "0.75rem",
-              gap: "3px",
-              animation: "arrow-bounce 1.4s ease-in-out infinite",
-            }}
-          >
-            <div style={{ width: 1, height: 20, background: "rgba(245,215,100,0.4)" }} />
-            <div
-              style={{
-                width: 0,
-                height: 0,
-                borderLeft: "5px solid transparent",
-                borderRight: "5px solid transparent",
-                borderTop: "7px solid rgba(245,215,100,0.5)",
-              }}
-            />
-          </div>
-        )}
+        {/* Animated arrow pointing down toward search bar */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: "0.6rem", gap: "2px" }}
+        >
+          <span style={{ ...SERIF, fontSize: "0.7rem", color: "rgba(245,215,100,0.6)", letterSpacing: "0.08em", marginBottom: "4px" }}>
+            {def.arrowLabel}
+          </span>
+          {/* Three chevron arrows, staggered animation */}
+          {[0, 1, 2].map((i) => (
+            <svg key={i} width="14" height="8" viewBox="0 0 14 8" fill="none"
+              style={{ animation: `chevron-fall 1.2s ease-in-out ${i * 0.18}s infinite`, opacity: 0 }}>
+              <path d="M1 1L7 7L13 1" stroke="rgba(245,215,100,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ))}
+        </motion.div>
       </div>
 
       <style>{`
-        @keyframes tip-pulse {
-          0%, 100% { opacity: 0.5; transform: scale(1); }
-          50%       { opacity: 1;   transform: scale(1.4); }
+        @keyframes chevron-fall {
+          0%        { opacity: 0;   transform: translateY(-4px); }
+          40%, 60%  { opacity: 0.9; transform: translateY(0); }
+          100%      { opacity: 0;   transform: translateY(4px); }
         }
-        @keyframes arrow-bounce {
-          0%, 100% { transform: translateY(0); opacity: 0.6; }
-          50%       { transform: translateY(5px); opacity: 1; }
+        @keyframes pulse-dot {
+          0%, 100% { opacity: 0.5; transform: scale(1); }
+          50%       { opacity: 1;   transform: scale(1.5); }
         }
       `}</style>
     </>
@@ -452,60 +380,33 @@ function TipStep({
 
 // ── Toast ──────────────────────────────────────────────────────────────────
 
-function ToastStep({ def, onEnd }: { def: StepDef; onEnd: () => void }) {
+function ToastStep({ def, onEnd }: { def: Extract<StepDef, { type: "toast" }>; onEnd: () => void }) {
   useEffect(() => {
     const t = setTimeout(onEnd, 2800);
     return () => clearTimeout(t);
   }, [onEnd]);
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: "1.25rem",
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 72,
-        pointerEvents: "none",
-      }}
-    >
+    <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)" }}>
       <motion.div
-        key="done-toast"
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0, y: -10, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -8 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.55rem",
-          background: "rgba(7,8,16,0.92)",
+          display: "flex", alignItems: "center", gap: "0.55rem",
+          background: "rgba(6,7,15,0.92)",
           border: "1px solid rgba(245,215,100,0.28)",
           borderRadius: "100px",
           padding: "0.5rem 1.25rem 0.5rem 0.875rem",
-          backdropFilter: "blur(16px)",
-          WebkitBackdropFilter: "blur(16px)",
+          backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
           boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
           whiteSpace: "nowrap",
+          pointerEvents: "none",
         }}
       >
-        <span
-          style={{
-            display: "inline-block",
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: "rgba(245,215,100,0.85)",
-            flexShrink: 0,
-          }}
-        />
-        <span
-          style={{
-            fontFamily: "'Cormorant Garamond', Georgia, serif",
-            fontSize: "0.875rem",
-            color: "rgba(255,255,255,0.85)",
-          }}
-        >
+        <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "rgba(245,215,100,0.85)", flexShrink: 0 }} />
+        <span style={{ ...SERIF, fontSize: "0.875rem", color: "rgba(255,255,255,0.85)" }}>
           {def.title}
         </span>
       </motion.div>

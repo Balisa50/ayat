@@ -1,10 +1,37 @@
 "use client";
 import { useEffect, useState } from "react";
 
+const ENTRY_KEY = "ayat:entryLastShown";
+const COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours → max 2 shows per day
+
+function shouldShowEntry(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const last = localStorage.getItem(ENTRY_KEY);
+    if (!last) return true; // first ever visit
+    return Date.now() - parseInt(last, 10) >= COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+function markEntryShown(): void {
+  try { localStorage.setItem(ENTRY_KEY, String(Date.now())); } catch {}
+}
+
 export function Entry({ onDone }: { onDone: () => void }) {
+  const [show] = useState(() => shouldShowEntry());
   const [phase, setPhase] = useState<"line" | "bismillah" | "bang" | "done">("line");
 
+  // If cooldown hasn't elapsed, skip the animation entirely.
   useEffect(() => {
+    if (!show) { onDone(); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!show) return;
+    markEntryShown();
     const t1 = setTimeout(() => setPhase("bismillah"), 2200);
     const t2 = setTimeout(() => setPhase("bang"), 3800);
     const t3 = setTimeout(() => {
@@ -16,9 +43,10 @@ export function Entry({ onDone }: { onDone: () => void }) {
       clearTimeout(t2);
       clearTimeout(t3);
     };
-  }, [onDone]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  if (phase === "done") return null;
+  if (!show || phase === "done") return null;
 
   return (
     <div
