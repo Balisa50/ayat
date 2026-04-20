@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -59,18 +60,53 @@ function stripMarkdown(s: string): string {
     .trim();
 }
 
+/** Validate that a value looks like a Quran verse reference. */
+function isValidRef(surah: unknown, ayah: unknown): boolean {
+  return (
+    typeof surah === "number" &&
+    Number.isInteger(surah) &&
+    surah >= 1 &&
+    surah <= 114 &&
+    typeof ayah === "number" &&
+    Number.isInteger(ayah) &&
+    ayah >= 1 &&
+    ayah <= 286 // longest surah (Al-Baqarah) has 286 verses
+  );
+}
+
 export async function POST(req: NextRequest) {
+  // ── Rate limit: 40 req / 60 s per IP ──────────────────────────────────
+  const rl = checkRateLimit(getCallerId(req.headers), 40, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { context: null },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) },
+      },
+    );
+  }
+
   try {
-    const { arabic, translation, surahName, ayah, surah } = await req.json();
-    const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) {
-      return NextResponse.json(
-        { context: null, error: "Server is missing ANTHROPIC_API_KEY" },
-        { status: 500 }
-      );
+    const body = await req.json();
+    const { arabic, translation, surahName, ayah, surah } = body ?? {};
+
+    // ── Input validation ───────────────────────────────────────────────
+    if (
+      typeof arabic !== "string" || arabic.length > 2000 ||
+      typeof translation !== "string" || translation.length > 2000 ||
+      typeof surahName !== "string" || surahName.length > 100 ||
+      !isValidRef(surah, ayah)
+    ) {
+      return NextResponse.json({ context: null }, { status: 400 });
     }
 
-    const userContent = `Surah ${surahName}${surah ? ` (${surah})` : ""}, Verse ${ayah}
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) {
+      return NextResponse.json({ context: null }, { status: 503 });
+    }
+
+    const userContent = `Surah ${surahName} (${surah}), Verse ${ayah}
 
 Arabic: ${arabic}
 
@@ -94,12 +130,7 @@ Write the five sections. Plain text only, no asterisks, no markdown.`;
     });
 
     if (!res.ok) {
-      const err = await res.text();
-      console.error("Anthropic API error", res.status, err);
-      return NextResponse.json(
-        { context: null, error: `Anthropic ${res.status}` },
-        { status: 500 }
-      );
+      return NextResponse.json({ context: null }, { status: 502 });
     }
 
     const data = await res.json();
@@ -107,10 +138,9 @@ Write the five sections. Plain text only, no asterisks, no markdown.`;
       Array.isArray(data.content) && data.content[0]?.type === "text"
         ? (data.content[0].text as string)
         : "";
+
     return NextResponse.json({ context: stripMarkdown(raw) });
-  } catch (e) {
-    const errMsg = e instanceof Error ? e.message : "Unknown error";
-    console.error("context API error:", errMsg);
-    return NextResponse.json({ context: null, error: errMsg }, { status: 500 });
+  } catch {
+    return NextResponse.json({ context: null }, { status: 500 });
   }
 }

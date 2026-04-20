@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { AnimatePresence } from "framer-motion";
 import { Entry } from "@/components/Entry";
 import { SearchBar, type DetectiveMatch } from "@/components/SearchBar";
 import { VerseCard } from "@/components/VerseCard";
+import { TourOverlay, TOUR_KEY, TOUR_STEPS } from "@/components/TourOverlay";
 import { matchVerses } from "@/lib/search";
 import { pickDailyVerse, todayKey } from "@/lib/daily";
 import { useReminders } from "@/components/Reminders";
@@ -27,17 +29,64 @@ export default function Home() {
   const [isDaily, setIsDaily] = useState(false);
   const [entryDone, setEntryDone] = useState(false);
 
-  // Detective state — 1-3 stars pulse; if single, auto-open after a beat.
+  // Detective state — stars pulse based on AI match.
   const [pulseIds, setPulseIds] = useState<Set<number> | undefined>(undefined);
+  const [pulseScores, setPulseScores] = useState<Map<number, number>>(new Map());
 
-  // Theme search reminder fires once per session on first non-empty query.
+  // ── Guided tour state ────────────────────────────────────────────────────
+  // -1 = hidden; 0–(TOUR_STEPS-1) = active step
+  const [tourStep, setTourStep] = useState<number>(-1);
+
+  // Start tour for first-time visitors once the galaxy is ready
+  useEffect(() => {
+    if (!entryDone || !verses) return;
+    try {
+      if (!localStorage.getItem(TOUR_KEY)) {
+        const t = setTimeout(() => setTourStep(0), 700);
+        return () => clearTimeout(t);
+      }
+    } catch { /* localStorage blocked — skip tour */ }
+  }, [entryDone, verses]);
+
+  // Tour step 1 → 2: user tapped a star
+  useEffect(() => {
+    if (tourStep === 1 && selected !== null) setTourStep(2);
+  }, [selected, tourStep]);
+
+  // Tour step 2 → 3: user typed a theme
+  useEffect(() => {
+    if (tourStep === 2 && query) setTourStep(3);
+  }, [query, tourStep]);
+
+  // Tour step 3 → 4: user used Ask detective
+  useEffect(() => {
+    if (tourStep === 3 && pulseIds && pulseIds.size > 0) setTourStep(4);
+  }, [pulseIds, tourStep]);
+
+  const advanceTour = useCallback(() => {
+    setTourStep((s) => {
+      const next = s + 1;
+      if (next >= TOUR_STEPS) {
+        try { localStorage.setItem(TOUR_KEY, "1"); } catch {}
+        return -1;
+      }
+      return next;
+    });
+  }, []);
+
+  const endTour = useCallback(() => {
+    try { localStorage.setItem(TOUR_KEY, "1"); } catch {}
+    setTourStep(-1);
+  }, []);
+
+  // ── Theme search reminder (once per session) ─────────────────────────────
   const themeTriggeredRef = useRef(false);
 
   useEffect(() => {
     fetch("/data/verses.json", { cache: "force-cache" })
       .then((r) => r.json())
       .then((data: Verse[]) => setVerses(data))
-      .catch((e) => console.error("Failed to load verses:", e));
+      .catch(() => { /* fail silently — loading indicator handles this */ });
   }, []);
 
   const matched = useMemo(() => {
@@ -45,18 +94,15 @@ export default function Home() {
     return matchVerses(verses, query);
   }, [verses, query]);
 
-  // Theme reminder — fire once when a real query lands a result.
   useEffect(() => {
-    if (!query) return;
-    if (themeTriggeredRef.current) return;
-    if (matched.size === 0) return;
+    if (!query || themeTriggeredRef.current || matched.size === 0) return;
     themeTriggeredRef.current = true;
     reminders.trigger("theme-search");
   }, [query, matched, reminders]);
 
-  // Daily ayah auto-open (once per device per day)
+  // ── Daily ayah auto-open (once per device per day) ───────────────────────
   useEffect(() => {
-    if (!verses || !entryDone || selected) return;
+    if (!verses || !entryDone || selected || tourStep >= 0) return;
     const today = todayKey();
     const last = typeof window !== "undefined" ? localStorage.getItem(DAILY_STORAGE_KEY) : null;
     if (last === today) return;
@@ -69,12 +115,18 @@ export default function Home() {
     }, 600);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verses, entryDone]);
+  }, [verses, entryDone, tourStep]);
 
-  // ── Detective result handler ─────────────────────────────
-  // 1-3 stars glow. Single high-confidence → auto-open the card.
-  const handleDetective = (matches: DetectiveMatch[]) => {
+  // ── Clear detective pulse ─────────────────────────────────────────────────
+  const clearPulse = useCallback(() => {
+    setPulseIds(undefined);
+    setPulseScores(new Map());
+  }, []);
+
+  // ── Detective result handler ──────────────────────────────────────────────
+  const handleDetective = useCallback((matches: DetectiveMatch[]) => {
     if (!verses || matches.length === 0) return;
+
     const resolved: { verse: Verse; m: DetectiveMatch }[] = [];
     for (const m of matches) {
       const v = verses.find((x) => x.surah === m.surah && x.ayah === m.ayah);
@@ -82,37 +134,42 @@ export default function Home() {
     }
     if (resolved.length === 0) return;
 
-    // Clear theme search while detective runs.
+    resolved.sort((a, b) => b.m.confidence - a.m.confidence);
+
+    const scores = new Map<number, number>();
+    resolved.forEach((r) => scores.set(r.verse.id, r.m.confidence));
+    setPulseScores(scores);
     setQuery("");
     setPulseIds(new Set(resolved.map((r) => r.verse.id)));
 
-    // Single result → let the full 2-pass shooting-star animation complete
-    // (2 × 1.4 s = 2.8 s), then open the card. 3200 ms gives a comfortable margin.
+    // Single result → auto-open after shooting-star animation (≈3.2 s)
     if (resolved.length === 1) {
       const only = resolved[0];
       setTimeout(() => {
+        setPulseIds(undefined);
+        setPulseScores(new Map());
         setAskReflection(only.m.reason);
         setSelected(only.verse);
-        setPulseIds(undefined);
         reminders.trigger("detective-hit");
       }, 3200);
-    } else {
-      // Multi-result: let the user pick. Clear pulses when they do.
-      // No auto-open. The reminder fires if they click one of the pulsed stars.
     }
-  };
+  }, [verses, reminders]);
 
-  // ── Clicking a pulsed star clears pulse & opens it ──────
-  const handleSelectVerse = (v: Verse) => {
+  // ── Star click handler ────────────────────────────────────────────────────
+  // Clear pulse immediately when a pulsed verse is opened — settled stars
+  // would sit directly behind the verse card's backdrop otherwise.
+  const handleSelectVerse = useCallback((v: Verse) => {
     if (pulseIds?.has(v.id)) {
-      setPulseIds(undefined);
       reminders.trigger("detective-hit");
+      clearPulse();
     }
     setSelected(v);
-  };
+  }, [pulseIds, reminders, clearPulse]);
 
   return (
     <main className="relative h-screen w-screen overflow-hidden cosmos-bg">
+
+      {/* AYAT wordmark */}
       <div className="fixed top-5 left-6 z-20 select-none pointer-events-none">
         <div className="font-serif-fine text-sm tracking-[0.35em] uppercase text-white/80">AYAT</div>
         <div className="font-serif-fine italic text-[10px] text-white/35 mt-0.5">
@@ -120,6 +177,7 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Revelation legend */}
       <div className="fixed top-5 right-6 z-20 flex flex-col gap-1 pointer-events-none">
         <div className="flex items-center gap-2 text-xs font-serif-fine text-white/55">
           <span className="h-1.5 w-1.5 rounded-full bg-[#8aa4ff]" /> Meccan
@@ -129,20 +187,24 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Galaxy */}
       {verses && entryDone && (
         <Galaxy
           verses={verses}
           matchedIds={matched}
           pulseIds={pulseIds}
+          pulseScores={pulseScores}
           onSelectVerse={handleSelectVerse}
         />
       )}
 
+      {/* Entry animation */}
       <Entry onDone={() => setEntryDone(true)} />
 
+      {/* Search bar */}
       {entryDone && verses && (
         <SearchBar
-          onSearch={setQuery}
+          onSearch={(q) => { setQuery(q); if (q) clearPulse(); }}
           activeQuery={query}
           matchCount={query ? matched.size : null}
           verses={verses}
@@ -150,6 +212,7 @@ export default function Home() {
         />
       )}
 
+      {/* Verse card */}
       <VerseCard
         verse={selected}
         allVerses={verses}
@@ -161,7 +224,6 @@ export default function Home() {
           setIsDaily(false);
         }}
         onJumpToVerse={(v) => {
-          // Following a "Read next" = verse chain; bump counter.
           reminders.bumpChain();
           setAskReflection(null);
           setIsDaily(false);
@@ -169,11 +231,25 @@ export default function Home() {
         }}
       />
 
+      {/* Loading state */}
       {!verses && entryDone && (
         <div className="fixed inset-0 z-10 flex items-center justify-center">
           <p className="font-serif-fine italic text-white/60">Unfolding the cosmos…</p>
         </div>
       )}
+
+      {/* Guided tour */}
+      <AnimatePresence mode="wait">
+        {tourStep >= 0 && (
+          <TourOverlay
+            key={`tour-${tourStep}`}
+            step={tourStep}
+            onNext={advanceTour}
+            onEnd={endTour}
+          />
+        )}
+      </AnimatePresence>
+
     </main>
   );
 }

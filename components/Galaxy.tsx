@@ -17,6 +17,7 @@ interface GalaxyProps {
   verses: Verse[];
   matchedIds: Set<number>;
   pulseIds?: Set<number>;
+  pulseScores?: Map<number, number>; // verse id → confidence 0-1 (highest = largest star)
   onSelectVerse: (v: Verse) => void;
 }
 
@@ -38,7 +39,7 @@ function makeSpriteTexture(): THREE.Texture {
   return tex;
 }
 
-export function Galaxy({ verses, matchedIds, pulseIds, onSelectVerse }: GalaxyProps) {
+export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, onSelectVerse }: GalaxyProps) {
   return (
     <div className="fixed inset-0" style={{ zIndex: 0 }}>
       <Canvas
@@ -54,6 +55,7 @@ export function Galaxy({ verses, matchedIds, pulseIds, onSelectVerse }: GalaxyPr
           verses={verses}
           matchedIds={matchedIds}
           pulseIds={pulseIds}
+          pulseScores={pulseScores}
           onSelectVerse={onSelectVerse}
         />
         <OrbitControls
@@ -92,11 +94,13 @@ function ParticleField({
   verses,
   matchedIds,
   pulseIds,
+  pulseScores,
   onSelectVerse,
 }: {
   verses: Verse[];
   matchedIds: Set<number>;
   pulseIds?: Set<number>;
+  pulseScores?: Map<number, number>;
   onSelectVerse: (v: Verse) => void;
 }) {
   const pointsRef = useRef<THREE.Points>(null!);
@@ -138,8 +142,12 @@ function ParticleField({
       cols[i * 3 + 2] = c.b;
     }
 
+    const aSizes = new Float32Array(verses.length).fill(1.0);
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(cols.slice(), 3));
+    const aSizeAttr = new THREE.BufferAttribute(aSizes, 1);
+    aSizeAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute("aSize", aSizeAttr);
     return { geometry: geo, baseColors: cols, basePositions: positions.slice() };
   }, [verses]);
 
@@ -167,19 +175,30 @@ function ParticleField({
   });
 
   // ── Shooting-star state ───────────────────────────────────────────────────
-  // Two-pass animation: phase 0→1 = shoot outward past center, phase 1→2 = return to settle
+  // Animation phases:
+  //   Phase 0→1 (PASS_SECS):  launch → overshoot
+  //   Phase 1→2 (PASS_SECS):  overshoot → settle
+  //   Phase 2+  (SETTLE_PAUSE): breathe at settleXYZ
+  //   Return phase (RETURN_SECS): drift back from settleXYZ → originXYZ
+  //   After return: stars at origin, still gold, slightly larger (aSize=1.5)
   type ShootingState = {
     indices: number[];
+    rankSizes: number[];            // target aSize per star (k → rankSizes[k])
     originXYZ: Float32Array;        // galaxy starting positions
-    launchXYZ: Float32Array;        // where each star launches FROM (may override origin for multi)
+    launchXYZ: Float32Array;        // where each star launches FROM
     overshootXYZ: Float32Array;     // far-wall bounce target
     settleXYZ: Float32Array;        // final resting position (near camera center)
     startTime: number;
     bounced: boolean[];             // flash flag per star
+    returnStartTime: number;        // timestamp when return-to-galaxy begins; -1 until then
   };
+  const SETTLE_PAUSE = 2.0;         // seconds to stay at settleXYZ before drifting back
+  const RETURN_SECS  = 3.0;         // seconds for return-to-galaxy drift
   const shootRef = useRef<ShootingState | null>(null);
   const pulseRef = useRef<Set<number> | undefined>(pulseIds);
   useEffect(() => { pulseRef.current = pulseIds; }, [pulseIds]);
+  const pulseScoresRef = useRef<Map<number, number> | undefined>(pulseScores);
+  useEffect(() => { pulseScoresRef.current = pulseScores; }, [pulseScores]);
 
   useEffect(() => {
     if (!pulseIds || pulseIds.size === 0) {
@@ -287,14 +306,33 @@ function ParticleField({
     }
     posAttr.needsUpdate = true;
 
+    // Pre-compute per-star target sizes based on confidence rank.
+    // Higher confidence → bigger star so user reaches for the most likely first.
+    const RANK_SIZES = [3.8, 2.8, 2.0, 1.6, 1.3];
+    const scores = pulseScoresRef.current;
+    // Sort indices by confidence descending to assign ranks
+    const indexedScores = indices.map((idx) => ({
+      idx,
+      conf: scores?.get(verses[idx].id) ?? 0.7,
+    }));
+    indexedScores.sort((a, b) => b.conf - a.conf);
+    // rankSizes[k] = target aSize for indices[k]
+    const rankSizes: number[] = new Array(n).fill(1.2);
+    indexedScores.forEach(({ idx }, rank) => {
+      const k = indices.indexOf(idx);
+      rankSizes[k] = RANK_SIZES[Math.min(rank, RANK_SIZES.length - 1)];
+    });
+
     shootRef.current = {
       indices,
+      rankSizes,
       originXYZ: origin,
       launchXYZ: launch,
       overshootXYZ: overshoot,
       settleXYZ: settle,
       startTime: performance.now() / 1000,
       bounced: new Array(n).fill(false),
+      returnStartTime: -1,
     };
   }, [pulseIds, verses, geometry, camera]);
 
@@ -324,46 +362,64 @@ function ParticleField({
         arr[i * 3 + 1] = g;
         arr[i * 3 + 2] = b;
       } else if (matchedIds.has(v.id)) {
-        arr[i * 3 + 0] = Math.min(1, r * 1.55 + 0.25);
-        arr[i * 3 + 1] = Math.min(1, g * 1.55 + 0.25);
-        arr[i * 3 + 2] = Math.min(1, b * 1.55 + 0.25);
+        arr[i * 3 + 0] = Math.min(1, r * 1.65 + 0.30);
+        arr[i * 3 + 1] = Math.min(1, g * 1.65 + 0.30);
+        arr[i * 3 + 2] = Math.min(1, b * 1.65 + 0.30);
       } else {
-        arr[i * 3 + 0] = r * 0.04;
-        arr[i * 3 + 1] = g * 0.04;
-        arr[i * 3 + 2] = b * 0.04;
+        // Keep unmatched stars faintly visible so the galaxy field stays intact
+        arr[i * 3 + 0] = r * 0.13;
+        arr[i * 3 + 1] = g * 0.13;
+        arr[i * 3 + 2] = b * 0.13;
       }
     }
     colorAttr.needsUpdate = true;
   }, [matchedIds, pulseIds, verses, geometry, baseColors]);
 
-  // Reset positions and velocities when pulse ends
+  // Reset positions, velocities, and aSize when pulse ends
   useEffect(() => {
     if (pulseIds && pulseIds.size > 0) return;
     const posAttr = geometry.getAttribute("position") as THREE.BufferAttribute;
-    const arr = posAttr.array as Float32Array;
-    for (let i = 0; i < basePositions.length; i++) arr[i] = basePositions[i];
+    const posArr = posAttr.array as Float32Array;
+    for (let i = 0; i < basePositions.length; i++) posArr[i] = basePositions[i];
     posAttr.needsUpdate = true;
+    // Reset per-vertex sizes back to 1.0
+    const aSizeAttr = geometry.getAttribute("aSize") as THREE.BufferAttribute;
+    const aSizeArr = aSizeAttr.array as Float32Array;
+    aSizeArr.fill(1.0);
+    aSizeAttr.needsUpdate = true;
     // Also zero velocities
     velX.current.fill(0);
     velY.current.fill(0);
     velZ.current.fill(0);
   }, [pulseIds, geometry, basePositions]);
 
-  const material = useMemo(
-    () =>
-      new THREE.PointsMaterial({
-        size: 0.32,
-        vertexColors: true,
-        map: sprite,
-        alphaMap: sprite,
-        transparent: true,
-        depthWrite: false,
-        opacity: 0.9,
-        blending: THREE.NormalBlending,
-        sizeAttenuation: true,
-      }),
-    [sprite],
-  );
+  const material = useMemo(() => {
+    const mat = new THREE.PointsMaterial({
+      size: 0.32,
+      vertexColors: true,
+      map: sprite,
+      alphaMap: sprite,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.9,
+      blending: THREE.NormalBlending,
+      sizeAttenuation: true,
+    });
+    // Inject per-vertex size attribute so each detective-result star
+    // can be scaled independently by confidence rank.
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          "attribute float aSize;\n#include <common>",
+        )
+        .replace(
+          "gl_PointSize = size;",
+          "gl_PointSize = size * aSize;",
+        );
+    };
+    return mat;
+  }, [sprite]);
 
   // ── Pointer / swipe tracking for impulse ─────────────────────────────────
   useEffect(() => {
@@ -443,9 +499,12 @@ function ParticleField({
 
     const hasPulse = (pulseRef.current?.size ?? 0) > 0;
     const shoot = shootRef.current;
+    const aSizeAttr = geometry.getAttribute("aSize") as THREE.BufferAttribute;
+    const aSizeArr  = aSizeAttr.array as Float32Array;
 
-    // ── Physics simulation (skip while shooting stars are in flight) ────────
-    if (!hasPulse) {
+    // ── Physics simulation (skip while shooting stars are in flight or returning) ──
+    const isReturning = shoot && shoot.returnStartTime > 0;
+    if (!hasPulse && !isReturning) {
       for (let i = 0; i < verses.length; i++) {
         const px = posArr[i * 3 + 0];
         const py = posArr[i * 3 + 1];
@@ -512,19 +571,35 @@ function ParticleField({
       return;
     }
 
-    // ── Shooting star two-pass animation ────────────────────────────────────
-    // Phase 0→1: launch → overshoot (first pass through center)
-    // Phase 1→2: overshoot → settle (return and land)
-    const PASS_SECS  = 1.4;   // seconds per pass
-    const TOTAL_SECS = PASS_SECS * 2;
+    // ── Shooting star animation ──────────────────────────────────────────────
+    // Phase 0→1 (PASS_SECS):  launch → overshoot
+    // Phase 1→2 (PASS_SECS):  overshoot → settle
+    // Settled + SETTLE_PAUSE: breathing gold at settleXYZ
+    // Return phase (RETURN_SECS): drift back to originXYZ, stay gold+larger in galaxy
+    const PASS_SECS = 1.4;
     const nowSec  = performance.now() / 1000;
     const elapsed = nowSec - shoot.startTime;
     const totalPhase = Math.min(2, elapsed / PASS_SECS);
     const solo = shoot.indices.length === 1;
 
     const allSettled = totalPhase >= 2;
-    // Detect crossing flash window (2-star pass-1 midpoint)
     const inFlash = shoot.indices.length === 2 && totalPhase > 0.42 && totalPhase < 0.68;
+
+    // Track when to start the return-to-galaxy drift
+    if (allSettled && shoot.returnStartTime < 0) {
+      // Will start return after SETTLE_PAUSE seconds from when settled
+      const settledAt = shoot.startTime + PASS_SECS * 2;
+      if (nowSec - settledAt >= SETTLE_PAUSE) {
+        shoot.returnStartTime = nowSec;
+      }
+    }
+
+    const returning = shoot.returnStartTime > 0;
+    const returnProgress = returning
+      ? Math.min(1, (nowSec - shoot.returnStartTime) / RETURN_SECS)
+      : 0;
+    // returnDone: when true the stars are back in the galaxy at their origin positions
+    const _returnDone = returning && returnProgress >= 1; void _returnDone;
 
     for (let k = 0; k < shoot.indices.length; k++) {
       const i = shoot.indices[k];
@@ -537,10 +612,19 @@ function ParticleField({
       const sx = shoot.settleXYZ[k * 3];
       const sy = shoot.settleXYZ[k * 3 + 1];
       const sz = shoot.settleXYZ[k * 3 + 2];
+      const rx = shoot.originXYZ[k * 3];
+      const ry = shoot.originXYZ[k * 3 + 1];
+      const rz = shoot.originXYZ[k * 3 + 2];
 
       let nx: number, ny: number, nz: number;
 
-      if (totalPhase <= 1) {
+      if (returning) {
+        // Drift smoothly from settleXYZ back to originXYZ
+        const eased = easeInOutCubic(returnProgress);
+        nx = sx + (rx - sx) * eased;
+        ny = sy + (ry - sy) * eased;
+        nz = sz + (rz - sz) * eased;
+      } else if (totalPhase <= 1) {
         // Pass 1: launch → overshoot
         const eased = easeOutCubic(totalPhase);
         nx = lx + (ox - lx) * eased;
@@ -558,50 +642,74 @@ function ParticleField({
       posArr[i * 3 + 1] = ny;
       posArr[i * 3 + 2] = nz;
 
-      // Brightness: blazing hot during travel, breathing gold once settled
+      // Per-vertex size: biggest star = most confident, scales down by rank
+      const targetSize = shoot.rankSizes[k] ?? 1.2;
+      if (returning) {
+        // Lerp from big settled size → 1.5 (slightly above normal so it stands out in galaxy)
+        const eased = easeInOutCubic(returnProgress);
+        aSizeArr[i] = targetSize + (1.5 - targetSize) * eased;
+      } else if (allSettled) {
+        // Gentle breathing pulse on the settled size
+        const breathe = 1 + 0.12 * Math.sin(t * 3.2 + k * 0.9);
+        aSizeArr[i] = targetSize * breathe;
+      } else {
+        // In flight: ramp up to target size as stars approach settle
+        const ramp = totalPhase <= 1 ? totalPhase : 1;
+        aSizeArr[i] = 1.0 + (targetSize - 1.0) * eased_ramp(ramp);
+      }
+
+      // Brightness animation
       const phaseK = k * 0.9;
       let bright: number;
       if (inFlash) {
-        // Crossing flash: white-hot burst
         bright = 2.2 + 0.6 * Math.abs(Math.sin(t * 40 + phaseK));
         colorArr[i * 3]     = 1.0;
         colorArr[i * 3 + 1] = 1.0;
         colorArr[i * 3 + 2] = Math.min(1, 0.85 + 0.15 * Math.abs(Math.sin(t * 40)));
         if (!shoot.bounced[k]) shoot.bounced[k] = true;
-      } else if (allSettled) {
-        // Settled: deep breathing gold
-        bright = 0.72 + 0.50 * Math.sin(t * 3.2 + phaseK);
-        if (solo) bright *= 1.35;
+      } else if (returning || allSettled) {
+        // Gold — slightly dimmer during return so it blends back naturally
+        const dimFactor = returning ? (1 - returnProgress * 0.4) : 1;
+        const conf = pulseScoresRef.current?.get(verses[i].id) ?? 0.7;
+        const rankBoost = 0.5 + conf * 1.0;
+        bright = (0.72 + 0.50 * Math.sin(t * 3.2 + phaseK)) * rankBoost * dimFactor;
+        if (solo && !returning) bright *= 1.35;
         colorArr[i * 3]     = Math.min(1, 1.0 * bright);
         colorArr[i * 3 + 1] = Math.min(1, 0.84 * bright);
         colorArr[i * 3 + 2] = Math.min(1, 0.36 * bright);
       } else {
         // In flight: blazing gold-white
-        bright = 1.9 + 0.3 * Math.sin(t * 16 + phaseK);
+        const conf = pulseScoresRef.current?.get(verses[i].id) ?? 0.7;
+        const rankBoost = 0.6 + conf * 0.8;
+        bright = (1.9 + 0.3 * Math.sin(t * 16 + phaseK)) * rankBoost;
         colorArr[i * 3]     = Math.min(1, 1.0 * bright);
         colorArr[i * 3 + 1] = Math.min(1, 0.88 * bright);
         colorArr[i * 3 + 2] = Math.min(1, 0.45 * bright);
       }
     }
-    posAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+    posAttr.needsUpdate    = true;
+    colorAttr.needsUpdate  = true;
+    aSizeAttr.needsUpdate  = true;
 
-    // Star size — dramatically larger during the detection animation
-    // Background stars are 4% brightness so only the shooting stars pop.
+    // Global material.size: used as baseline that aSize multiplies against.
+    // Keep it at the pulsing-breathing value from the settle/return phase.
     if (inFlash) {
-      // Collision burst: spike to maximum
       material.size = 4.2 + Math.sin(t * 35) * 0.9;
-    } else if (allSettled) {
-      material.size = solo
-        ? 2.8 + Math.sin(t * 3.0) * 0.55
-        : 2.2 + Math.sin(t * 2.8) * 0.40;
+    } else if (returning || allSettled) {
+      // aSize handles per-vertex scaling; material.size just breathes gently
+      material.size = 0.72 + Math.sin(t * 2.8) * 0.08;
     } else {
-      // In flight: large and pulsing
+      // In flight: slightly larger base
       material.size = solo
-        ? 3.2 + Math.sin(t * 10) * 0.45
-        : 2.8 + Math.sin(t * 12) * 0.40;
+        ? 0.80 + Math.sin(t * 10) * 0.06
+        : 0.76 + Math.sin(t * 12) * 0.05;
     }
   });
+
+  // Helper used in the in-flight aSize ramp (not a hook — just a local function)
+  function eased_ramp(x: number): number {
+    return easeOutCubic(x);
+  }
 
   const handleClick = () => {
     if (!pointsRef.current) return;

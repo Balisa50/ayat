@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -22,9 +23,9 @@ const SYSTEM = `You are a Quran verse detective. The user will describe a verse,
 
 Search across: literal meaning, tafsir tradition (Ibn Kathir, Al-Tabari, As-Sa'di, Ar-Razi), asbab al-nuzul (occasions of revelation), themes, and the stories of prophets.
 
-You will be given up to 5 candidate verses found by text search. These are your primary candidates. Evaluate them carefully against the user's description. If one or more are strong matches, return them. If none are correct but you are certain of the right verse from your own knowledge, return that instead — but only if you are genuinely certain (confidence 0.9+).
+You will be given up to 15 candidate verses found by text search. These are your primary candidates. Evaluate them carefully against the user's description. If one or more are strong matches, return them. If none are correct but you are certain of the right verse from your own knowledge, return additional matches — but only if you are genuinely certain (confidence 0.9+).
 
-Return ONLY a JSON array of the top 3 matches. Shape:
+Return ALL plausible matches above 0.3 confidence, up to 10 matches, ordered by confidence descending. Do NOT artificially limit to 3 — if the query matches many verses (e.g. "say" appears in dozens of verses), return all of them. Shape:
 [
   {"surah_number": <1-114>, "verse_number": <int>, "confidence": <0.0-1.0>, "reason": "<one sentence, plain text>"}
 ]
@@ -64,7 +65,7 @@ type ValidatedMatch = {
   reason: string;
 };
 
-// ── Dataset cache ───────────────────────────────────────────────────────
+// ── Dataset cache ────────────────────────────────────────────────────────
 let versesCache: RawVerse[] | null = null;
 
 async function loadVerses(): Promise<RawVerse[]> {
@@ -75,7 +76,6 @@ async function loadVerses(): Promise<RawVerse[]> {
   return versesCache;
 }
 
-/** Verse bounds for validation: surah → max ayah */
 const STOP = new Set([
   "a","an","the","and","or","but","in","on","at","to","for","of","with","by",
   "from","was","is","are","were","been","be","have","has","had","do","does",
@@ -99,14 +99,13 @@ function tokenize(q: string): string[] {
  * Fast text match over all verses. Returns top-N by token overlap score.
  * Also handles Arabic transliteration fragments and surah names.
  */
-function findCandidates(verses: RawVerse[], query: string, topN = 5): RawVerse[] {
+function findCandidates(verses: RawVerse[], query: string, topN = 15): RawVerse[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
-  // Also check surah names
   const queryLower = query.toLowerCase();
-
   const scored: { verse: RawVerse; score: number }[] = [];
+
   for (const v of verses) {
     const text = v.translation.toLowerCase();
     const surahLower = v.surahName.toLowerCase();
@@ -114,12 +113,9 @@ function findCandidates(verses: RawVerse[], query: string, topN = 5): RawVerse[]
     let score = 0;
     for (const t of tokens) {
       if (text.includes(t)) score += 1;
-      // Partial surah name match gives a bonus
       if (surahLower.includes(t)) score += 0.5;
     }
-    // Phrase bonus: if multi-word phrase appears verbatim
     if (tokens.length >= 2 && text.includes(queryLower)) score += 2;
-
     if (score > 0) scored.push({ verse: v, score });
   }
 
@@ -150,7 +146,7 @@ async function askClaude(
 ): Promise<DetectiveMatch[] | null> {
   const candidateBlock =
     candidates.length > 0
-      ? `\n\nThe closest verses found by text search are:\n${candidates
+      ? `\n\nThe closest verses found by text search (up to 15 candidates):\n${candidates
           .map(
             (v, i) =>
               `${i + 1}. ${v.surahName} ${v.surah}:${v.ayah} — "${v.translation.slice(0, 120)}${v.translation.length > 120 ? "…" : ""}"`,
@@ -171,17 +167,14 @@ async function askClaude(
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-5",
-      max_tokens: 600,
+      max_tokens: 800,
       temperature: 0.4,
       system: SYSTEM,
       messages: [{ role: "user", content: userContent }],
     }),
   });
 
-  if (!res.ok) {
-    console.error("reflect anthropic", res.status, await res.text());
-    return null;
-  }
+  if (!res.ok) return null;
 
   const data = await res.json();
   const raw =
@@ -211,6 +204,7 @@ async function validate(
   matches: DetectiveMatch[],
   verses: RawVerse[],
 ): Promise<ValidatedMatch[]> {
+  // Build surah → max ayah bounds from the real dataset
   const boundsMap = new Map<number, number>();
   for (const v of verses) {
     const cur = boundsMap.get(v.surah) ?? 0;
@@ -221,21 +215,38 @@ async function validate(
   for (const m of matches) {
     const surah = m.surah_number;
     const ayah = m.verse_number;
+    // Must be integers within real dataset bounds
+    if (
+      !Number.isInteger(surah) || surah < 1 || surah > 114 ||
+      !Number.isInteger(ayah) || ayah < 1
+    ) continue;
     const max = boundsMap.get(surah);
-    if (!max || ayah < 1 || ayah > max) continue;
+    if (!max || ayah > max) continue;
     if (m.confidence < 0.3) continue;
     good.push({
       surah,
       ayah,
       confidence: Math.max(0, Math.min(1, m.confidence)),
-      reason: stripMarkdown(m.reason),
+      reason: stripMarkdown(m.reason).slice(0, 300), // cap reason length
     });
   }
   good.sort((a, b) => b.confidence - a.confidence);
-  return good.slice(0, 3);
+  return good.slice(0, 10);
 }
 
 export async function POST(req: NextRequest) {
+  // ── Rate limit: 20 req / 60 s per IP ──────────────────────────────────
+  const rl = checkRateLimit(getCallerId(req.headers), 20, 60_000);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a moment." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) },
+      },
+    );
+  }
+
   try {
     const body = await req.json();
     const query =
@@ -244,6 +255,7 @@ export async function POST(req: NextRequest) {
         : typeof body?.query === "string"
           ? body.query
           : "";
+
     if (!query.trim()) {
       return NextResponse.json({ error: "Tell me what you're looking for." }, { status: 400 });
     }
@@ -253,12 +265,11 @@ export async function POST(req: NextRequest) {
 
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) {
-      return NextResponse.json({ error: "Server is missing ANTHROPIC_API_KEY" }, { status: 500 });
+      return NextResponse.json({ error: "Service temporarily unavailable." }, { status: 503 });
     }
 
-    // Load verses and find text-match candidates to ground Claude's response.
     const verses = await loadVerses();
-    const candidates = findCandidates(verses, query.trim(), 5);
+    const candidates = findCandidates(verses, query.trim(), 15);
 
     // First pass
     let matches = await askClaude(key, query.trim(), candidates, null);
@@ -287,9 +298,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ matches: validated });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown";
-    console.error("reflect route error", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }
