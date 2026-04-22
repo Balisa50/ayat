@@ -20,6 +20,7 @@ interface SearchBarProps {
   activeQuery: string;
   verses: Verse[] | null;
   onDetective: (matches: DetectiveMatch[], query: string) => void;
+  onClear?: () => void; // called when user clears any search — sends stars home
 }
 
 // Full pools — 8 shown at a time, shuffled on every mount so they feel fresh
@@ -88,6 +89,7 @@ export function SearchBar({
   activeQuery,
   verses,
   onDetective,
+  onClear,
 }: SearchBarProps) {
   const [mode, setMode] = useState<Mode>("theme");
   const [q, setQ] = useState("");
@@ -98,6 +100,11 @@ export function SearchBar({
   // Pick a fresh random subset on every mount so suggestions feel new each visit
   const [themeSuggestions] = useState(() => pickRandom(ALL_THEME_SUGGESTIONS, 8));
   const [askSuggestions]   = useState(() => pickRandom(ALL_ASK_SUGGESTIONS, 4));
+
+  // Track already-seen results per query so re-submitting the same query
+  // returns different verses (rotation across the full Quran).
+  const seenRef = useRef<Map<string, Array<{ surah: number; ayah: number }>>>(new Map());
+  const lastQueryRef = useRef<string>("");
   const askErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Speech recognition
@@ -147,6 +154,8 @@ export function SearchBar({
     const trimmed = value.trim();
     setQ(trimmed);
     onSearch(trimmed);
+    // When theme is cleared, send stars home
+    if (!trimmed) onClear?.();
   };
 
   const submitAsk = async (value: string) => {
@@ -155,10 +164,14 @@ export function SearchBar({
     setAsking(true);
     setAskError(null);
     try {
+      // Build exclude list: verses already shown for this exact query
+      const key = trimmed.toLowerCase();
+      const seen = seenRef.current.get(key) ?? [];
+
       const r = await fetch("/api/reflect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: trimmed }),
+        body: JSON.stringify({ query: trimmed, exclude: seen }),
       });
       const d = await r.json();
       if (!r.ok) {
@@ -172,9 +185,12 @@ export function SearchBar({
         showAskError(d.message ?? "No strong match. Try a more specific detail.");
         return;
       }
+      // Record returned verses so next call for same query skips them
+      seenRef.current.set(key, [
+        ...seen,
+        ...matches.map((m) => ({ surah: m.surah, ayah: m.ayah })),
+      ]);
       onDetective(matches, trimmed);
-      // Keep the ask query visible so the user can see what they searched.
-      // They can clear it manually with the X button.
       setInterim("");
     } catch {
       showAskError("Network hiccup. Try again.");
@@ -200,6 +216,9 @@ export function SearchBar({
     if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
     if (value.trim()) {
       askDebounceRef.current = setTimeout(() => submitAsk(value), 1500);
+    } else {
+      // User erased everything — send any result stars back to the galaxy
+      onClear?.();
     }
   };
 
@@ -336,6 +355,7 @@ export function SearchBar({
                   onClick={() => {
                     if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
                     submitTheme("");
+                    onClear?.();
                   }}
                   className="p-1 text-white/40 hover:text-white/80 transition-colors"
                   aria-label="Clear search"
@@ -406,14 +426,16 @@ export function SearchBar({
                   )}
                 </button>
               )}
-              {feeling && !asking && !listening && (
+              {(feeling || interim) && (
                 <button
                   type="button"
                   onClick={() => {
+                    if (listening) stopListening();
                     setFeeling("");
                     latestFeelingRef.current = "";
                     setInterim("");
                     if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
+                    onClear?.();
                   }}
                   className="p-1 text-white/40 hover:text-white/80 transition-colors"
                   aria-label="Clear"

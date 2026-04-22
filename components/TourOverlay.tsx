@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 
 export const TOUR_KEY = "ayat:tour:v1";
@@ -9,7 +9,7 @@ export const TOUR_STEPS = 5; // 0=welcome 1=galaxy 2=theme 3=ask 4=done
 // ── Step definitions ───────────────────────────────────────────────────────
 
 type StepDef =
-  | { type: "welcome"; title: string; body: string; sub: string }
+  | { type: "welcome"; title: string; lines: string[] }
   | { type: "pill";    eyebrow: string; title: string; sub: string; hint: string }
   | { type: "top";     eyebrow: string; title: string; body: string; arrowLabel: string }
   | { type: "toast";   title: string };
@@ -17,30 +17,33 @@ type StepDef =
 const STEPS: StepDef[] = [
   {
     type: "welcome",
-    title: "Not an app.\nA universe.",
-    body: "AYAT renders all 6,236 verses of the Quran as a living star field. Each star is a verse — positioned by meaning, not scripture order. Verses that share a theme draw toward each other like constellations.\n\nBlue stars are Meccan surahs — revealed early, mostly about faith, God, and the soul. Gold stars are Medinan surahs — revealed later, covering community, law, and ethics.",
-    sub: "This is an exploration space. Not a full Quran reader. Not a memorisation tool. AYAT is for wandering — and for finding the verse you didn't know you were looking for.",
+    title: "6,236 stars.\nEach one is a verse.",
+    lines: [
+      "AYAT renders the entire Quran as a living galaxy. Verses that share a theme cluster together — like constellations of meaning.",
+      "Blue stars = Meccan surahs (faith, soul, God)  ·  Gold = Medinan (law, community, ethics)",
+      "Three things to try →  tap a star  ·  search a theme  ·  describe a verse by voice",
+    ],
   },
   {
     type: "pill",
     eyebrow: "Step 1 of 3",
     title: "Tap any star.",
-    sub: "Blue = Meccan · Gold = Medinan · Drag to orbit · Pinch to zoom",
-    hint: "The galaxy is live — go ahead and tap one",
+    sub: "Stars are everywhere — look around the field, not just the center.\nBlue = Meccan · Gold = Medinan · Drag to orbit · Pinch / scroll to zoom",
+    hint: "Go ahead — tap any star you see",
   },
   {
     type: "top",
     eyebrow: "Step 2 of 3  ·  Theme Search",
-    title: "Search by meaning,\nnot keywords.",
-    body: "Type a theme in the bar below — FORGIVENESS, PATIENCE, LIGHT, GRIEF — and the galaxy dims everything except the verses that carry that meaning.\n\nIt reads intent, not exact words. Try it.",
-    arrowLabel: "The search bar is right below ↓",
+    title: "Type a theme.\nThe galaxy answers.",
+    body: "Type FORGIVENESS, PATIENCE, GRIEF, LIGHT — anything.\n\nEvery verse carrying that meaning lights up. The rest dims. You're looking at a constellation of meaning.\n\nTry one now ↓",
+    arrowLabel: "Type in the search bar below ↓",
   },
   {
     type: "top",
     eyebrow: "Step 3 of 3  ·  Verse Detective",
-    title: "Ask. Speak.\nFind it.",
-    body: "Tap Ask in the bar below, then describe a verse you half-remember — a story, a feeling, even a fragment of Arabic.\n\nTap the mic icon to speak: Arabic, English, however it comes out.\n\nIt finds the verse. Try it.",
-    arrowLabel: "Switch to Ask in the bar below ↓",
+    title: "Half-remember a verse?\nJust describe it.",
+    body: "Tap Ask, then type — or tap the mic and speak in Arabic or English.\n\n\"the verse about iron being sent down\"\n\"God is closer than your jugular vein\"\n\"two seas that don't mix\"\n\nIt finds the verse. Try it ↓",
+    arrowLabel: "Tap Ask in the bar below ↓",
   },
   {
     type: "toast",
@@ -61,7 +64,7 @@ export function TourOverlay({ step, onNext, onEnd }: TourOverlayProps) {
   if (!def) return null;
 
   switch (def.type) {
-    case "welcome": return <WelcomeStep def={def} onNext={onNext} />;
+    case "welcome": return <WelcomeStep def={def} onNext={onNext} onEnd={onEnd} />;
     case "pill":    return <PillStep    def={def} onNext={onNext} onEnd={onEnd} />;
     case "top":     return <TopStep     def={def} onNext={onNext} onEnd={onEnd} />;
     case "toast":   return <ToastStep   def={def} onEnd={onEnd} />;
@@ -75,20 +78,27 @@ const SERIF: React.CSSProperties = {
 
 // ── Welcome ────────────────────────────────────────────────────────────────
 
-function WelcomeStep({ def, onNext }: { def: Extract<StepDef, { type: "welcome" }>; onNext: () => void }) {
+function WelcomeStep({ def, onNext, onEnd }: { def: Extract<StepDef, { type: "welcome" }>; onNext: () => void; onEnd: () => void }) {
+  // CTA becomes active after 1.6 s so users see at least the headline before skipping
+  const [ctaReady, setCtaReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setCtaReady(true), 1600);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.7 }}
+      transition={{ duration: 0.6 }}
       style={{
         position: "fixed", inset: 0, zIndex: 70,
         display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center",
         textAlign: "center",
         padding: "2rem 1.5rem",
-        background: "radial-gradient(ellipse at 50% 38%, rgba(5,6,14,0.92) 0%, rgba(3,4,10,0.97) 100%)",
+        background: "radial-gradient(ellipse at 50% 38%, rgba(5,6,14,0.94) 0%, rgba(3,4,10,0.98) 100%)",
         overflowY: "auto",
       }}
     >
@@ -96,61 +106,84 @@ function WelcomeStep({ def, onNext }: { def: Extract<StepDef, { type: "welcome" 
       <motion.div
         initial={{ opacity: 0, letterSpacing: "0.8em" }}
         animate={{ opacity: 1, letterSpacing: "0.35em" }}
-        transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}
-        style={{ ...SERIF, fontSize: "0.7rem", color: "rgba(245,215,100,0.6)", textTransform: "uppercase", marginBottom: "2rem" }}
+        transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
+        style={{ ...SERIF, fontSize: "0.7rem", color: "rgba(245,215,100,0.6)", textTransform: "uppercase", marginBottom: "1.75rem" }}
       >
         A &nbsp; Y &nbsp; A &nbsp; T
       </motion.div>
 
       {/* Headline */}
       <motion.h1
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5, duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-        style={{ ...SERIF, fontSize: "clamp(1.85rem, 7vw, 3.75rem)", fontWeight: 400, color: "rgba(255,255,255,0.97)", lineHeight: 1.1, marginBottom: "1.5rem", whiteSpace: "pre-line", maxWidth: 560 }}
+        transition={{ delay: 0.35, duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+        style={{ ...SERIF, fontSize: "clamp(1.75rem, 6.5vw, 3.5rem)", fontWeight: 400, color: "rgba(255,255,255,0.97)", lineHeight: 1.1, marginBottom: "1.5rem", whiteSpace: "pre-line", maxWidth: 540 }}
       >
         {def.title}
       </motion.h1>
 
-      {/* Body */}
-      <motion.p
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1.25, duration: 1.1 }}
-        style={{ ...SERIF, fontSize: "clamp(0.875rem, 2.3vw, 1rem)", color: "rgba(255,255,255,0.62)", lineHeight: 1.8, maxWidth: 480, marginBottom: "1.25rem" }}
-      >
-        {def.body}
-      </motion.p>
+      {/* Three-line explainer — each line fades in separately */}
+      <div style={{ maxWidth: 460, marginBottom: "2.25rem", display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+        {def.lines.map((line, i) => (
+          <motion.p
+            key={i}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.75 + i * 0.35, duration: 0.8 }}
+            style={{
+              ...SERIF,
+              fontSize: i === 2
+                ? "clamp(0.8rem, 2vw, 0.9rem)"
+                : "clamp(0.875rem, 2.2vw, 1rem)",
+              color: i === 2 ? "rgba(245,215,100,0.55)" : "rgba(255,255,255,0.58)",
+              lineHeight: 1.75,
+              fontStyle: i === 2 ? "italic" : "normal",
+            }}
+          >
+            {line}
+          </motion.p>
+        ))}
+      </div>
 
-      {/* Sub */}
-      <motion.p
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 2.0, duration: 1.1 }}
-        style={{ ...SERIF, fontSize: "clamp(0.75rem, 1.9vw, 0.875rem)", color: "rgba(255,255,255,0.32)", lineHeight: 1.9, maxWidth: 460, marginBottom: "2.75rem", fontStyle: "italic" }}
+      {/* CTA row */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: ctaReady ? 1 : 0, y: ctaReady ? 0 : 10 }}
+        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+        style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.9rem" }}
       >
-        {def.sub}
-      </motion.p>
-
-      {/* CTA */}
-      <motion.button
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 2.85, duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
-        onClick={onNext}
-        whileHover={{ scale: 1.04 }}
-        whileTap={{ scale: 0.97 }}
-        style={{ ...SERIF, fontSize: "0.8125rem", letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(245,215,100,0.9)", background: "rgba(245,215,100,0.07)", border: "1px solid rgba(245,215,100,0.3)", borderRadius: "100px", padding: "0.8rem 2.5rem", cursor: "pointer" }}
-      >
-        Show me
-      </motion.button>
+        <motion.button
+          onClick={ctaReady ? onNext : undefined}
+          whileHover={ctaReady ? { scale: 1.04 } : {}}
+          whileTap={ctaReady ? { scale: 0.97 } : {}}
+          style={{
+            ...SERIF,
+            fontSize: "0.8125rem", letterSpacing: "0.2em", textTransform: "uppercase",
+            color: ctaReady ? "rgba(245,215,100,0.9)" : "rgba(245,215,100,0.3)",
+            background: "rgba(245,215,100,0.07)",
+            border: `1px solid ${ctaReady ? "rgba(245,215,100,0.3)" : "rgba(245,215,100,0.1)"}`,
+            borderRadius: "100px",
+            padding: "0.8rem 2.5rem",
+            cursor: ctaReady ? "pointer" : "default",
+            transition: "color 0.3s, border-color 0.3s",
+          }}
+        >
+          Show me the galaxy →
+        </motion.button>
+        {ctaReady && (
+          <button
+            onClick={onEnd}
+            style={{ ...SERIF, fontSize: "0.65rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(255,255,255,0.2)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+          >
+            skip
+          </button>
+        )}
+      </motion.div>
     </motion.div>
   );
 }
 
 // ── Pill (step 1 — tap a star) ─────────────────────────────────────────────
-// Galaxy is FULLY VISIBLE and interactive. Only a small pill floats at the top.
-// Overlay is nearly invisible so nothing is blocked.
 
 function PillStep({
   def,
@@ -163,25 +196,25 @@ function PillStep({
 }) {
   return (
     <>
-      {/* Near-invisible overlay — just enough to signal "guide is active"; galaxy still clickable */}
+      {/* Near-invisible overlay — galaxy still clickable */}
       <div
         style={{
           position: "fixed", inset: 0, zIndex: 71,
-          background: "rgba(0,0,0,0.18)",
+          background: "rgba(0,0,0,0.15)",
           pointerEvents: "none",
         }}
       />
 
       {/* Floating pill — top-center */}
-      <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)", width: "min(380px, calc(100vw - 2rem))" }}>
+      <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)", width: "min(400px, calc(100vw - 2rem))" }}>
         <motion.div
           initial={{ opacity: 0, y: -18, scale: 0.94 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
           style={{
             borderRadius: "20px",
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "rgba(6,7,15,0.88)",
+            border: "1px solid rgba(255,255,255,0.13)",
+            background: "rgba(6,7,15,0.90)",
             backdropFilter: "blur(24px)",
             WebkitBackdropFilter: "blur(24px)",
             padding: "1rem 1.125rem 0.875rem",
@@ -202,7 +235,7 @@ function PillStep({
           </div>
 
           {/* Title */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.625rem", marginBottom: "0.375rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.625rem", marginBottom: "0.5rem" }}>
             {/* Pulsing tap indicator */}
             <span style={{ position: "relative", flexShrink: 0, width: 28, height: 28 }}>
               <span style={{
@@ -221,25 +254,33 @@ function PillStep({
             </h2>
           </div>
 
-          {/* Sub */}
-          <p style={{ ...SERIF, fontSize: "0.75rem", color: "rgba(255,255,255,0.38)", margin: "0 0 0.75rem", lineHeight: 1.5, paddingLeft: "2.25rem" }}>
-            {def.sub}
-          </p>
+          {/* Sub — split by newline so we can style separately */}
+          {def.sub.split("\n").map((line, i) => (
+            <p key={i} style={{
+              ...SERIF,
+              fontSize: i === 0 ? "0.8rem" : "0.72rem",
+              color: i === 0 ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.32)",
+              margin: i === 0 ? "0 0 0.3rem 2.25rem" : "0 0 0.75rem 2.25rem",
+              lineHeight: 1.5,
+            }}>
+              {line}
+            </p>
+          ))}
 
           {/* Hint row */}
           <div style={{
             display: "flex", alignItems: "center", gap: "0.45rem",
             padding: "0.45rem 0.75rem",
             borderRadius: "8px",
-            background: "rgba(245,215,100,0.05)",
-            border: "1px solid rgba(245,215,100,0.12)",
+            background: "rgba(245,215,100,0.06)",
+            border: "1px solid rgba(245,215,100,0.14)",
           }}>
             <span style={{
-              width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
-              background: "rgba(245,215,100,0.8)",
+              width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+              background: "rgba(245,215,100,0.85)",
               animation: "pulse-dot 2s ease-in-out infinite",
             }} />
-            <span style={{ ...SERIF, fontSize: "0.775rem", color: "rgba(245,215,100,0.65)", fontStyle: "italic" }}>
+            <span style={{ ...SERIF, fontSize: "0.78rem", color: "rgba(245,215,100,0.7)", fontStyle: "italic" }}>
               {def.hint}
             </span>
           </div>
@@ -263,15 +304,17 @@ function PillStep({
           0%, 100% { transform: translateY(0);   opacity: 0.55; }
           50%       { transform: translateY(6px); opacity: 1; }
         }
+        @keyframes chevron-fall {
+          0%        { opacity: 0;   transform: translateY(-4px); }
+          40%, 60%  { opacity: 0.9; transform: translateY(0); }
+          100%      { opacity: 0;   transform: translateY(4px); }
+        }
       `}</style>
     </>
   );
 }
 
 // ── Top card (steps 2 & 3 — search bar interactions) ──────────────────────
-// Card lives at the TOP of the screen.
-// Overlay fades from dark (top) to transparent (bottom) so the search bar
-// is completely visible and tappable.
 
 function TopStep({
   def,
@@ -284,16 +327,16 @@ function TopStep({
 }) {
   return (
     <>
-      {/* Gradient overlay: dark at top, clears at bottom so search bar shows */}
+      {/* Gradient overlay: dark top, clear bottom so search bar is tappable */}
       <div
         style={{
           position: "fixed", inset: 0, zIndex: 71,
-          background: "linear-gradient(to bottom, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.72) 55%, rgba(0,0,0,0.1) 80%, rgba(0,0,0,0) 100%)",
+          background: "linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.75) 52%, rgba(0,0,0,0.08) 80%, rgba(0,0,0,0) 100%)",
           pointerEvents: "none",
         }}
       />
 
-      {/* Card — top of screen, full width minus margin */}
+      {/* Card — top of screen */}
       <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)", width: "min(420px, calc(100vw - 2rem))" }}>
         <motion.div
           key={def.eyebrow}
@@ -304,7 +347,7 @@ function TopStep({
           style={{
             borderRadius: "18px",
             border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(6,7,15,0.92)",
+            background: "rgba(6,7,15,0.93)",
             backdropFilter: "blur(22px)",
             WebkitBackdropFilter: "blur(22px)",
             padding: "1.125rem 1.25rem 1rem",
@@ -321,10 +364,23 @@ function TopStep({
             {def.title}
           </h2>
 
-          {/* Body */}
-          <p style={{ ...SERIF, fontSize: "clamp(0.8rem, 2.1vw, 0.875rem)", color: "rgba(255,255,255,0.55)", lineHeight: 1.72, whiteSpace: "pre-line", marginBottom: "0.875rem" }}>
-            {def.body}
-          </p>
+          {/* Body — split by \n so each line is separate */}
+          <div style={{ marginBottom: "0.875rem" }}>
+            {def.body.split("\n").map((line, i) => (
+              line.trim() ? (
+                <p key={i} style={{
+                  ...SERIF,
+                  fontSize: "clamp(0.8rem, 2.1vw, 0.875rem)",
+                  color: line.startsWith('"') ? "rgba(245,215,100,0.6)" : "rgba(255,255,255,0.55)",
+                  lineHeight: 1.65,
+                  fontStyle: line.startsWith('"') ? "italic" : "normal",
+                  margin: "0 0 0.2rem",
+                }}>
+                  {line}
+                </p>
+              ) : <div key={i} style={{ height: "0.4rem" }} />
+            ))}
+          </div>
 
           {/* Footer */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -336,9 +392,9 @@ function TopStep({
             </button>
             <button
               onClick={onNext}
-              style={{ ...SERIF, fontSize: "0.65rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(245,215,100,0.8)", background: "rgba(245,215,100,0.07)", border: "1px solid rgba(245,215,100,0.22)", borderRadius: "100px", padding: "0.35rem 1rem", cursor: "pointer" }}
+              style={{ ...SERIF, fontSize: "0.65rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(245,215,100,0.85)", background: "rgba(245,215,100,0.07)", border: "1px solid rgba(245,215,100,0.24)", borderRadius: "100px", padding: "0.35rem 1rem", cursor: "pointer" }}
             >
-              skip →
+              next →
             </button>
           </div>
         </motion.div>
@@ -350,30 +406,17 @@ function TopStep({
           transition={{ delay: 0.5 }}
           style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: "0.6rem", gap: "2px" }}
         >
-          <span style={{ ...SERIF, fontSize: "0.7rem", color: "rgba(245,215,100,0.6)", letterSpacing: "0.08em", marginBottom: "4px" }}>
+          <span style={{ ...SERIF, fontSize: "0.7rem", color: "rgba(245,215,100,0.65)", letterSpacing: "0.08em", marginBottom: "4px" }}>
             {def.arrowLabel}
           </span>
-          {/* Three chevron arrows, staggered animation */}
           {[0, 1, 2].map((i) => (
             <svg key={i} width="14" height="8" viewBox="0 0 14 8" fill="none"
               style={{ animation: `chevron-fall 1.2s ease-in-out ${i * 0.18}s infinite`, opacity: 0 }}>
-              <path d="M1 1L7 7L13 1" stroke="rgba(245,215,100,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M1 1L7 7L13 1" stroke="rgba(245,215,100,0.65)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           ))}
         </motion.div>
       </div>
-
-      <style>{`
-        @keyframes chevron-fall {
-          0%        { opacity: 0;   transform: translateY(-4px); }
-          40%, 60%  { opacity: 0.9; transform: translateY(0); }
-          100%      { opacity: 0;   transform: translateY(4px); }
-        }
-        @keyframes pulse-dot {
-          0%, 100% { opacity: 0.5; transform: scale(1); }
-          50%       { opacity: 1;   transform: scale(1.5); }
-        }
-      `}</style>
     </>
   );
 }

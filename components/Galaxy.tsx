@@ -18,6 +18,7 @@ interface GalaxyProps {
   matchedIds: Set<number>;
   pulseIds?: Set<number>;
   pulseScores?: Map<number, number>; // verse id → confidence 0-1 (highest = largest star)
+  dismissing?: boolean;              // true = user cleared search; trigger return animation
   onSelectVerse: (v: Verse) => void;
 }
 
@@ -39,13 +40,13 @@ function makeSpriteTexture(): THREE.Texture {
   return tex;
 }
 
-export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, onSelectVerse }: GalaxyProps) {
+export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, dismissing, onSelectVerse }: GalaxyProps) {
   return (
     <div className="fixed inset-0" style={{ zIndex: 0 }}>
       <Canvas
         aria-label="Interactive Quran star field — 6,236 verses as stars. Tap any star to read the verse."
         role="img"
-        camera={{ position: [0, 6, 72], fov: 55, near: 0.1, far: 600 }}
+        camera={{ position: [0, 6, 60], fov: 55, near: 0.1, far: 600 }}
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
         onCreated={({ gl }) => {
@@ -58,15 +59,16 @@ export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, onSelectVers
           matchedIds={matchedIds}
           pulseIds={pulseIds}
           pulseScores={pulseScores}
+          dismissing={dismissing}
           onSelectVerse={onSelectVerse}
         />
         <OrbitControls
           enablePan={false}
           enableZoom
-          minDistance={22}
+          minDistance={10}
           maxDistance={160}
-          zoomSpeed={0.6}
-          rotateSpeed={0.35}
+          zoomSpeed={1.4}
+          rotateSpeed={0.55}
           autoRotate={matchedIds.size === 0 && !pulseIds?.size}
           autoRotateSpeed={0.12}
         />
@@ -97,12 +99,14 @@ function ParticleField({
   matchedIds,
   pulseIds,
   pulseScores,
+  dismissing,
   onSelectVerse,
 }: {
   verses: Verse[];
   matchedIds: Set<number>;
   pulseIds?: Set<number>;
   pulseScores?: Map<number, number>;
+  dismissing?: boolean;
   onSelectVerse: (v: Verse) => void;
 }) {
   const pointsRef = useRef<THREE.Points>(null!);
@@ -195,12 +199,24 @@ function ParticleField({
     returnStartTime: number;        // timestamp when return-to-galaxy begins; -1 until then
   };
   const SETTLE_PAUSE = 2.0;         // seconds to stay at settleXYZ before drifting back
-  const RETURN_SECS  = 3.0;         // seconds for return-to-galaxy drift
+  const RETURN_SECS  = 2.8;         // seconds for return-to-galaxy drift (on clear)
   const shootRef = useRef<ShootingState | null>(null);
   const pulseRef = useRef<Set<number> | undefined>(pulseIds);
   useEffect(() => { pulseRef.current = pulseIds; }, [pulseIds]);
   const pulseScoresRef = useRef<Map<number, number> | undefined>(pulseScores);
   useEffect(() => { pulseScoresRef.current = pulseScores; }, [pulseScores]);
+  // Keep a stable ref so useFrame always reads current matchedIds without stale closure
+  const matchedIdsRef = useRef<Set<number>>(matchedIds);
+  useEffect(() => { matchedIdsRef.current = matchedIds; }, [matchedIds]);
+  // Tracks whether we are in the "user cleared search" return animation
+  const dismissingRef = useRef(false);
+  useEffect(() => { dismissingRef.current = !!dismissing; }, [dismissing]);
+  // When user clears search → trigger the return-to-galaxy animation
+  useEffect(() => {
+    if (!dismissing || !shootRef.current) return;
+    if (shootRef.current.returnStartTime > 0) return; // already returning
+    shootRef.current.returnStartTime = performance.now() / 1000;
+  }, [dismissing]);
 
   useEffect(() => {
     if (!pulseIds || pulseIds.size === 0) {
@@ -310,7 +326,7 @@ function ParticleField({
 
     // Pre-compute per-star target sizes based on confidence rank.
     // Higher confidence → bigger star so user reaches for the most likely first.
-    const RANK_SIZES = [3.8, 2.8, 2.0, 1.6, 1.3];
+    const RANK_SIZES = [4.8, 3.6, 2.6, 2.0, 1.6];  // bigger so stars are clearly visible
     const scores = pulseScoresRef.current;
     // Sort indices by confidence descending to assign ranks
     const indexedScores = indices.map((idx) => ({
@@ -397,7 +413,7 @@ function ParticleField({
 
   const material = useMemo(() => {
     const mat = new THREE.PointsMaterial({
-      size: 0.32,
+      size: 0.68,           // was 0.32 — larger base so stars are visible at all distances
       vertexColors: true,
       map: sprite,
       alphaMap: sprite,
@@ -567,9 +583,38 @@ function ParticleField({
       posAttr.needsUpdate = true;
     }
 
-    // ── Global material breathing (when no shoot active) ────────────────────
+    // ── No shoot active: breathing + theme-search star pulse ────────────────
     if (!shoot) {
-      material.size = 0.31 + Math.sin(t * 0.4) * 0.018;
+      const themedIds = matchedIdsRef.current;
+      const hasTheme = themedIds.size > 0;
+
+      if (hasTheme) {
+        // Theme search active: matched stars come FORWARD, pulse bright and big.
+        // Unmatched stay dim at aSize 1.0 (already handled by color dimming).
+        const THEME_MIN = 2.8;
+        const THEME_MAX = 4.0;
+        for (let i = 0; i < verses.length; i++) {
+          if (themedIds.has(verses[i].id)) {
+            // Each star pulses with a slight phase offset so they shimmer as a constellation
+            const pulse = THEME_MIN + (THEME_MAX - THEME_MIN) * (0.5 + 0.5 * Math.sin(t * 2.6 + i * 0.15));
+            aSizeArr[i] = pulse;
+          } else {
+            aSizeArr[i] = 1.0;
+          }
+        }
+        aSizeAttr.needsUpdate = true;
+        // Slightly larger base so the theme stars really blaze
+        material.size = 0.72 + Math.sin(t * 0.45) * 0.03;
+      } else {
+        // No search active: gentle global breathing only
+        material.size = 0.66 + Math.sin(t * 0.4) * 0.022;
+        // Reset any leftover theme aSizes
+        let dirty = false;
+        for (let i = 0; i < aSizeArr.length; i++) {
+          if (aSizeArr[i] !== 1.0) { aSizeArr[i] = 1.0; dirty = true; }
+        }
+        if (dirty) aSizeAttr.needsUpdate = true;
+      }
       return;
     }
 
@@ -587,13 +632,12 @@ function ParticleField({
     const allSettled = totalPhase >= 2;
     const inFlash = shoot.indices.length === 2 && totalPhase > 0.42 && totalPhase < 0.68;
 
-    // Return-to-galaxy animation is intentionally disabled.
-    // Sending stars back to their originXYZ buries them inside the sphere of
-    // 6,236 stars — invisible and impossible to tap. Instead, pulsed stars
-    // stay at their settle positions (foreground, clearly visible) until the
-    // user explicitly clears the results with X or a new search.
-    const returning = false;
-    const returnProgress = 0;
+    // Return animation fires only when user explicitly clears the search.
+    // Stars drift back to their originXYZ positions in the galaxy.
+    const returning = shoot.returnStartTime > 0;
+    const returnProgress = returning
+      ? Math.min(1, (nowSec - shoot.returnStartTime) / RETURN_SECS)
+      : 0;
     for (let k = 0; k < shoot.indices.length; k++) {
       const i = shoot.indices[k];
       const lx = shoot.launchXYZ[k * 3];
@@ -637,7 +681,11 @@ function ParticleField({
 
       // Per-vertex size: biggest star = most confident, scales down by rank
       const targetSize = shoot.rankSizes[k] ?? 1.2;
-      if (allSettled) {
+      if (returning) {
+        // Shrink back toward normal size as the star flies home
+        const eased = easeInOutCubic(returnProgress);
+        aSizeArr[i] = targetSize + (1.0 - targetSize) * eased;
+      } else if (allSettled) {
         // Breathe gently at full target size — star stays large and findable
         const breathe = 1 + 0.12 * Math.sin(t * 3.2 + k * 0.9);
         aSizeArr[i] = targetSize * breathe;
@@ -656,6 +704,16 @@ function ParticleField({
         colorArr[i * 3 + 1] = 1.0;
         colorArr[i * 3 + 2] = Math.min(1, 0.85 + 0.15 * Math.abs(Math.sin(t * 40)));
         if (!shoot.bounced[k]) shoot.bounced[k] = true;
+      } else if (returning) {
+        // Fade from gold toward base colour as stars fly home
+        const dimFactor = 1 - returnProgress * 0.7;
+        const conf = pulseScoresRef.current?.get(verses[i].id) ?? 0.7;
+        const rankBoost = 0.5 + conf * 1.0;
+        bright = (0.92 + 0.30 * Math.sin(t * 3.2 + phaseK)) * rankBoost * dimFactor;
+        colorArr[i * 3]     = Math.min(1, 1.0 * bright);
+        colorArr[i * 3 + 1] = Math.min(1, 0.84 * bright);
+        colorArr[i * 3 + 2] = Math.min(1, 0.36 * bright);
+        continue; // skip the common assignment below
       } else if (allSettled) {
         // Gold breathing glow — full brightness, stays settled in foreground
         const conf = pulseScoresRef.current?.get(verses[i].id) ?? 0.7;
@@ -682,15 +740,18 @@ function ParticleField({
     // Global material.size: used as baseline that aSize multiplies against.
     // Keep it at the pulsing-breathing value from the settle/return phase.
     if (inFlash) {
-      material.size = 4.2 + Math.sin(t * 35) * 0.9;
+      material.size = 4.8 + Math.sin(t * 35) * 1.1;
+    } else if (returning) {
+      material.size = 0.90 + Math.sin(t * 2.8) * 0.08;
     } else if (allSettled) {
-      // aSize handles per-vertex scaling; breathe the baseline gently
-      material.size = 0.82 + Math.sin(t * 2.8) * 0.08;
+      // Settled: big, bright, pulsing — these are the detective result stars.
+      // Use a large base so they are unmissable and look like real stars.
+      material.size = 1.15 + Math.sin(t * 2.8) * 0.14;
     } else {
-      // In flight: slightly larger base
+      // In flight: larger base so stars are clearly visible shooting across screen
       material.size = solo
-        ? 0.80 + Math.sin(t * 10) * 0.06
-        : 0.76 + Math.sin(t * 12) * 0.05;
+        ? 1.05 + Math.sin(t * 10) * 0.08
+        : 0.95 + Math.sin(t * 12) * 0.07;
     }
   });
 
@@ -708,11 +769,14 @@ function ParticleField({
       const idx = hits[0].index ?? -1;
       if (idx >= 0 && idx < verses.length) {
         const verse = verses[idx];
-        // When detective results are active, ONLY the highlighted stars respond
-        // to taps — the rest of the galaxy is locked until the user clears.
+        // Locked during clear/return animation — no taps while stars fly home
+        if (dismissingRef.current) return;
+        // Detective results active → only those stars respond
         if (pulseRef.current && pulseRef.current.size > 0) {
           if (!pulseRef.current.has(verse.id)) return;
         }
+        // Theme search active → only matched stars respond
+        if (matchedIds.size > 0 && !matchedIds.has(verse.id)) return;
         onSelectVerse(verse);
       }
     }
