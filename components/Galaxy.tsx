@@ -416,9 +416,10 @@ function ParticleField({
           arr[i * 3 + 1] = 0.84;
           arr[i * 3 + 2] = 0.36;
         } else {
-          arr[i * 3 + 0] = r * 0.04;
-          arr[i * 3 + 1] = g * 0.04;
-          arr[i * 3 + 2] = b * 0.04;
+          // Fully off — called stars blaze alone, no background haze at all
+          arr[i * 3 + 0] = 0;
+          arr[i * 3 + 1] = 0;
+          arr[i * 3 + 2] = 0;
         }
       } else if (!hasMatches) {
         arr[i * 3 + 0] = r;
@@ -643,8 +644,8 @@ function ParticleField({
         for (let i = 0; i < verses.length; i++) aSizeArr[i] = 0.0;
 
         if (themeState?.phase === "fly-in" && themeState.startT >= 0) {
-          const FADE_IN     = 0.7;
-          const MAX_STAGGER = 0.55;
+          const FADE_IN     = 1.1;   // each star takes 1.1s to reach full size
+          const MAX_STAGGER = 0.65;  // last star starts 0.65s after first → total ~1.75s
           const THEME_MIN   = 3.0;
           const THEME_MAX   = 4.6;
           const elapsed     = t - themeState.startT;
@@ -667,7 +668,7 @@ function ParticleField({
 
       } else if (themeState?.phase === "fly-out" && themeState.startT >= 0) {
         // ── FLY-OUT: galaxy reforming — matched stars shrink, dark ones bloom back ──
-        const FADE_OUT = 0.95;
+        const FADE_OUT = 1.2;  // galaxy reformation over 1.2s
         const elapsed  = t - themeState.startT;
         const prog     = Math.min(1, elapsed / FADE_OUT);
         const eased    = easeOutCubic(prog);
@@ -810,6 +811,14 @@ function ParticleField({
         colorArr[i * 3 + 2] = Math.min(1, 0.45 * bright);
       }
     }
+    // Non-pulse stars: completely invisible during flight + settle.
+    // During return they bloom back in so the galaxy reforms behind the flying stars.
+    for (let i = 0; i < verses.length; i++) {
+      if (!(pulseRef.current?.has(verses[i].id))) {
+        aSizeArr[i] = returning ? easeOutCubic(returnProgress) : 0.0;
+      }
+    }
+
     posAttr.needsUpdate    = true;
     colorAttr.needsUpdate  = true;
     aSizeAttr.needsUpdate  = true;
@@ -839,22 +848,29 @@ function ParticleField({
   const handleClick = () => {
     if (!pointsRef.current) return;
     raycaster.setFromCamera(pointer, camera);
-    raycaster.params.Points = { threshold: 0.8 };
+    raycaster.params.Points = { threshold: 0.7 };
     const hits = raycaster.intersectObject(pointsRef.current);
-    if (hits.length > 0) {
-      const idx = hits[0].index ?? -1;
-      if (idx >= 0 && idx < verses.length) {
-        const verse = verses[idx];
-        // Locked during clear/return animation — no taps while stars fly home
-        if (dismissingRef.current) return;
-        // Detective results active → only those stars respond
-        if (pulseRef.current && pulseRef.current.size > 0) {
-          if (!pulseRef.current.has(verse.id)) return;
-        }
-        // Theme search active → only matched stars respond
-        if (matchedIds.size > 0 && !matchedIds.has(verse.id)) return;
-        onSelectVerse(verse);
+    if (hits.length === 0) return;
+    if (dismissingRef.current) return;
+
+    const aSizeArr = (geometry.getAttribute("aSize") as THREE.BufferAttribute).array as Float32Array;
+
+    // Walk ALL hits closest-first — skip invisible/ineligible stars so they
+    // cannot block clicks meant for the visible called stars.
+    for (const hit of hits) {
+      const idx = hit.index ?? -1;
+      if (idx < 0 || idx >= verses.length) continue;
+      // Skip stars that are invisible (aSize ≈ 0 means not rendered)
+      if (aSizeArr[idx] < 0.5) continue;
+      const verse = verses[idx];
+      // Detective results active → only those stars respond
+      if (pulseRef.current && pulseRef.current.size > 0) {
+        if (!pulseRef.current.has(verse.id)) continue;
       }
+      // Theme search active → only matched stars respond
+      if (matchedIds.size > 0 && !matchedIds.has(verse.id)) continue;
+      onSelectVerse(verse);
+      return;
     }
   };
 
