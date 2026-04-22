@@ -29,10 +29,13 @@ function makeSpriteTexture(): THREE.Texture {
   c.height = size;
   const ctx = c.getContext("2d")!;
   const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0.0, "rgba(255,255,255,0.85)");
-  g.addColorStop(0.25, "rgba(255,255,255,0.45)");
-  g.addColorStop(0.6, "rgba(255,255,255,0.12)");
-  g.addColorStop(1.0, "rgba(255,255,255,0.0)");
+  // Sharp bright core → crisp star look (not a blurry blob)
+  g.addColorStop(0.0,  "rgba(255,255,255,1.0)");
+  g.addColorStop(0.06, "rgba(255,255,255,0.98)");
+  g.addColorStop(0.20, "rgba(255,255,255,0.60)");
+  g.addColorStop(0.45, "rgba(255,255,255,0.14)");
+  g.addColorStop(0.72, "rgba(255,255,255,0.03)");
+  g.addColorStop(1.0,  "rgba(255,255,255,0.0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   const tex = new THREE.CanvasTexture(c);
@@ -208,6 +211,24 @@ function ParticleField({
   // Keep a stable ref so useFrame always reads current matchedIds without stale closure
   const matchedIdsRef = useRef<Set<number>>(matchedIds);
   useEffect(() => { matchedIdsRef.current = matchedIds; }, [matchedIds]);
+
+  // Theme-search fly-in animation: tracks when the search changed + which indices
+  const themeAnimRef = useRef<{ startTime: number; indices: number[] } | null>(null);
+  useEffect(() => {
+    if (matchedIds.size === 0) { themeAnimRef.current = null; return; }
+    const indices: number[] = [];
+    for (let i = 0; i < verses.length; i++) {
+      if (matchedIds.has(verses[i].id)) indices.push(i);
+    }
+    // Shuffle indices by verse id so stars light up scattered across the galaxy
+    indices.sort((a, b) => {
+      const ra = ((Math.sin(verses[a].id * 9301 + 49297) * 100) % 1 + 1) % 1;
+      const rb = ((Math.sin(verses[b].id * 9301 + 49297) * 100) % 1 + 1) % 1;
+      return ra - rb;
+    });
+    themeAnimRef.current = { startTime: performance.now() / 1000, indices };
+  }, [matchedIds, verses]);
+
   // Tracks whether we are in the "user cleared search" return animation
   const dismissingRef = useRef(false);
   useEffect(() => { dismissingRef.current = !!dismissing; }, [dismissing]);
@@ -384,10 +405,10 @@ function ParticleField({
         arr[i * 3 + 1] = Math.min(1, g * 1.65 + 0.30);
         arr[i * 3 + 2] = Math.min(1, b * 1.65 + 0.30);
       } else {
-        // Keep unmatched stars faintly visible so the galaxy field stays intact
-        arr[i * 3 + 0] = r * 0.13;
-        arr[i * 3 + 1] = g * 0.13;
-        arr[i * 3 + 2] = b * 0.13;
+        // Completely off — matched stars shine alone, no background haze competing
+        arr[i * 3 + 0] = 0;
+        arr[i * 3 + 1] = 0;
+        arr[i * 3 + 2] = 0;
       }
     }
     colorAttr.needsUpdate = true;
@@ -413,14 +434,13 @@ function ParticleField({
 
   const material = useMemo(() => {
     const mat = new THREE.PointsMaterial({
-      size: 0.68,           // was 0.32 — larger base so stars are visible at all distances
+      size: 0.54,           // AdditiveBlending makes stars appear larger so base is smaller
       vertexColors: true,
       map: sprite,
-      alphaMap: sprite,
       transparent: true,
       depthWrite: false,
-      opacity: 0.9,
-      blending: THREE.NormalBlending,
+      opacity: 1.0,
+      blending: THREE.AdditiveBlending, // stars ADD their light — crisp glowing stars, not blurry blobs
       sizeAttenuation: true,
     });
     // Inject per-vertex size attribute so each detective-result star
@@ -583,32 +603,43 @@ function ParticleField({
       posAttr.needsUpdate = true;
     }
 
-    // ── No shoot active: breathing + theme-search star pulse ────────────────
+    // ── No shoot active: breathing + theme-search fly-in ───────────────────
     if (!shoot) {
       const themedIds = matchedIdsRef.current;
-      const hasTheme = themedIds.size > 0;
+      const hasTheme  = themedIds.size > 0;
 
       if (hasTheme) {
-        // Theme search active: matched stars come FORWARD, pulse bright and big.
-        // Unmatched stay dim at aSize 1.0 (already handled by color dimming).
-        const THEME_MIN = 2.8;
-        const THEME_MAX = 4.0;
+        // ALL non-matched stars: completely off — zero size so they're invisible
         for (let i = 0; i < verses.length; i++) {
-          if (themedIds.has(verses[i].id)) {
-            // Each star pulses with a slight phase offset so they shimmer as a constellation
-            const pulse = THEME_MIN + (THEME_MAX - THEME_MIN) * (0.5 + 0.5 * Math.sin(t * 2.6 + i * 0.15));
-            aSizeArr[i] = pulse;
-          } else {
-            aSizeArr[i] = 1.0;
-          }
+          if (!themedIds.has(verses[i].id)) aSizeArr[i] = 0.0;
         }
+
+        // Matched stars FLY IN with a staggered scale-up (like shooting stars answering the call)
+        const FADE_IN_SECS = 0.65;    // each star takes 0.65s to reach full size
+        const MAX_STAGGER  = 0.50;    // total spread: last star starts 0.5s after first
+        const THEME_MIN    = 3.0;
+        const THEME_MAX    = 4.6;
+        const themeAnim    = themeAnimRef.current;
+        const animElapsed  = themeAnim ? (performance.now() / 1000) - themeAnim.startTime : 999;
+        const total        = themeAnim?.indices.length ?? 0;
+
+        for (let k = 0; k < total; k++) {
+          const i         = themeAnim!.indices[k];
+          const stagger   = (k / Math.max(total - 1, 1)) * MAX_STAGGER;
+          const starAge   = Math.max(0, animElapsed - stagger);
+          const progress  = Math.min(1, starAge / FADE_IN_SECS);
+          const eased     = easeOutCubic(progress);
+          // Pulse once fully in — each star shimmers at a slightly different rate
+          const pulse     = THEME_MIN + (THEME_MAX - THEME_MIN) * (0.5 + 0.5 * Math.sin(t * 2.6 + i * 0.15));
+          aSizeArr[i]     = pulse * eased;
+        }
+
         aSizeAttr.needsUpdate = true;
-        // Slightly larger base so the theme stars really blaze
-        material.size = 0.72 + Math.sin(t * 0.45) * 0.03;
+        material.size = 0.58 + Math.sin(t * 0.45) * 0.022;
       } else {
         // No search active: gentle global breathing only
-        material.size = 0.66 + Math.sin(t * 0.4) * 0.022;
-        // Reset any leftover theme aSizes
+        material.size = 0.54 + Math.sin(t * 0.4) * 0.016;
+        // Reset any leftover theme aSizes back to 1.0
         let dirty = false;
         for (let i = 0; i < aSizeArr.length; i++) {
           if (aSizeArr[i] !== 1.0) { aSizeArr[i] = 1.0; dirty = true; }
@@ -740,18 +771,17 @@ function ParticleField({
     // Global material.size: used as baseline that aSize multiplies against.
     // Keep it at the pulsing-breathing value from the settle/return phase.
     if (inFlash) {
-      material.size = 4.8 + Math.sin(t * 35) * 1.1;
+      material.size = 3.6 + Math.sin(t * 35) * 0.9;   // additive = brighter, so smaller base
     } else if (returning) {
-      material.size = 0.90 + Math.sin(t * 2.8) * 0.08;
+      material.size = 0.76 + Math.sin(t * 2.8) * 0.06;
     } else if (allSettled) {
-      // Settled: big, bright, pulsing — these are the detective result stars.
-      // Use a large base so they are unmissable and look like real stars.
-      material.size = 1.15 + Math.sin(t * 2.8) * 0.14;
+      // Settled: big, pulsing — unmissable detective result stars
+      material.size = 0.98 + Math.sin(t * 2.8) * 0.12;
     } else {
-      // In flight: larger base so stars are clearly visible shooting across screen
+      // In flight: blazing across screen
       material.size = solo
-        ? 1.05 + Math.sin(t * 10) * 0.08
-        : 0.95 + Math.sin(t * 12) * 0.07;
+        ? 0.88 + Math.sin(t * 10) * 0.07
+        : 0.80 + Math.sin(t * 12) * 0.06;
     }
   });
 
