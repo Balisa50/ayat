@@ -212,22 +212,46 @@ function ParticleField({
   const matchedIdsRef = useRef<Set<number>>(matchedIds);
   useEffect(() => { matchedIdsRef.current = matchedIds; }, [matchedIds]);
 
-  // Theme-search fly-in animation: tracks when the search changed + which indices
-  const themeAnimRef = useRef<{ startTime: number; indices: number[] } | null>(null);
+  // Theme animation — fly-in when search arrives, fly-out when cleared.
+  // Uses Three.js clock (t) so timing is consistent with useFrame.
+  // startT = -1 means "initialise startT on first useFrame call".
+  const themeStateRef = useRef<{
+    phase: "fly-in" | "fly-out";
+    startT: number;            // Three.js elapsedTime when this phase began
+    indices: number[];         // matched verse indices (fly-in only)
+    fromSizes: Float32Array | null;  // snapshot for fly-out
+  } | null>(null);
+  const prevMatchedCountRef = useRef(0);
+
   useEffect(() => {
-    if (matchedIds.size === 0) { themeAnimRef.current = null; return; }
+    const wasActive = prevMatchedCountRef.current > 0;
+    prevMatchedCountRef.current = matchedIds.size;
+
+    if (matchedIds.size === 0) {
+      if (wasActive) {
+        // Theme just cleared → capture current aSizes so fly-out can tween from them
+        const aSizeAttr = geometry.getAttribute("aSize") as THREE.BufferAttribute;
+        const fromSizes = (aSizeAttr.array as Float32Array).slice();
+        themeStateRef.current = { phase: "fly-out", startT: -1, indices: [], fromSizes };
+      } else {
+        themeStateRef.current = null;
+      }
+      return;
+    }
+
+    // New theme → fly-in
     const indices: number[] = [];
     for (let i = 0; i < verses.length; i++) {
       if (matchedIds.has(verses[i].id)) indices.push(i);
     }
-    // Shuffle indices by verse id so stars light up scattered across the galaxy
+    // Scatter order so stars light up from all over the galaxy, not in a sweep
     indices.sort((a, b) => {
       const ra = ((Math.sin(verses[a].id * 9301 + 49297) * 100) % 1 + 1) % 1;
       const rb = ((Math.sin(verses[b].id * 9301 + 49297) * 100) % 1 + 1) % 1;
       return ra - rb;
     });
-    themeAnimRef.current = { startTime: performance.now() / 1000, indices };
-  }, [matchedIds, verses]);
+    themeStateRef.current = { phase: "fly-in", startT: -1, indices, fromSizes: null };
+  }, [matchedIds, verses, geometry]);
 
   // Tracks whether we are in the "user cleared search" return animation
   const dismissingRef = useRef(false);
@@ -603,43 +627,65 @@ function ParticleField({
       posAttr.needsUpdate = true;
     }
 
-    // ── No shoot active: breathing + theme-search fly-in ───────────────────
+    // ── No shoot active: theme fly-in / fly-out / steady breathing ─────────
     if (!shoot) {
-      const themedIds = matchedIdsRef.current;
-      const hasTheme  = themedIds.size > 0;
+      const themedIds  = matchedIdsRef.current;
+      const hasTheme   = themedIds.size > 0;
+      const themeState = themeStateRef.current;
+
+      // Initialise Three.js-clock startT on the very first frame of each phase
+      if (themeState && themeState.startT < 0) themeState.startT = t;
 
       if (hasTheme) {
-        // ALL non-matched stars: completely off — zero size so they're invisible
-        for (let i = 0; i < verses.length; i++) {
-          if (!themedIds.has(verses[i].id)) aSizeArr[i] = 0.0;
-        }
+        // ── FLY-IN: stars materialise from void, scattered across the galaxy ──
+        // First zero ALL stars; the loop below will grow matched ones back up.
+        // This ensures matched stars start invisible if the state isn't ready yet.
+        for (let i = 0; i < verses.length; i++) aSizeArr[i] = 0.0;
 
-        // Matched stars FLY IN with a staggered scale-up (like shooting stars answering the call)
-        const FADE_IN_SECS = 0.65;    // each star takes 0.65s to reach full size
-        const MAX_STAGGER  = 0.50;    // total spread: last star starts 0.5s after first
-        const THEME_MIN    = 3.0;
-        const THEME_MAX    = 4.6;
-        const themeAnim    = themeAnimRef.current;
-        const animElapsed  = themeAnim ? (performance.now() / 1000) - themeAnim.startTime : 999;
-        const total        = themeAnim?.indices.length ?? 0;
-
-        for (let k = 0; k < total; k++) {
-          const i         = themeAnim!.indices[k];
-          const stagger   = (k / Math.max(total - 1, 1)) * MAX_STAGGER;
-          const starAge   = Math.max(0, animElapsed - stagger);
-          const progress  = Math.min(1, starAge / FADE_IN_SECS);
-          const eased     = easeOutCubic(progress);
-          // Pulse once fully in — each star shimmers at a slightly different rate
-          const pulse     = THEME_MIN + (THEME_MAX - THEME_MIN) * (0.5 + 0.5 * Math.sin(t * 2.6 + i * 0.15));
-          aSizeArr[i]     = pulse * eased;
+        if (themeState?.phase === "fly-in" && themeState.startT >= 0) {
+          const FADE_IN     = 0.7;
+          const MAX_STAGGER = 0.55;
+          const THEME_MIN   = 3.0;
+          const THEME_MAX   = 4.6;
+          const elapsed     = t - themeState.startT;
+          const n           = themeState.indices.length;
+          for (let k = 0; k < n; k++) {
+            const i       = themeState.indices[k];
+            const stagger = (k / Math.max(n - 1, 1)) * MAX_STAGGER;
+            const starAge = Math.max(0, elapsed - stagger);
+            const prog    = Math.min(1, starAge / FADE_IN);
+            const eased   = easeOutCubic(prog);
+            const pulse   = THEME_MIN + (THEME_MAX - THEME_MIN) * (0.5 + 0.5 * Math.sin(t * 2.6 + i * 0.15));
+            aSizeArr[i]   = pulse * eased;
+          }
         }
+        // If themeState is null (first frame before effect fires): all stars stay 0
+        // — they appear on the next frame once themeState is initialised.
 
         aSizeAttr.needsUpdate = true;
         material.size = 0.58 + Math.sin(t * 0.45) * 0.022;
-      } else {
-        // No search active: gentle global breathing only
+
+      } else if (themeState?.phase === "fly-out" && themeState.startT >= 0) {
+        // ── FLY-OUT: galaxy reforming — matched stars shrink, dark ones bloom back ──
+        const FADE_OUT = 0.95;
+        const elapsed  = t - themeState.startT;
+        const prog     = Math.min(1, elapsed / FADE_OUT);
+        const eased    = easeOutCubic(prog);
+        const { fromSizes } = themeState;
+        for (let i = 0; i < verses.length; i++) {
+          const from  = fromSizes ? fromSizes[i] : 0;
+          aSizeArr[i] = from + (1.0 - from) * eased;  // from → 1.0
+        }
+        if (prog >= 1) {
+          themeStateRef.current = null;
+          for (let i = 0; i < aSizeArr.length; i++) aSizeArr[i] = 1.0;
+        }
+        aSizeAttr.needsUpdate = true;
         material.size = 0.54 + Math.sin(t * 0.4) * 0.016;
-        // Reset any leftover theme aSizes back to 1.0
+
+      } else {
+        // ── No theme at all: gentle global breathing ──────────────────────────
+        material.size = 0.54 + Math.sin(t * 0.4) * 0.016;
         let dirty = false;
         for (let i = 0; i < aSizeArr.length; i++) {
           if (aSizeArr[i] !== 1.0) { aSizeArr[i] = 1.0; dirty = true; }

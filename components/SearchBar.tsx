@@ -483,7 +483,12 @@ export function SearchBar({
             {askSuggestions.map((s) => (
               <button
                 key={s}
-                onClick={() => submitAsk(s)}
+                onClick={() => {
+                  // Write to the bar so X shows and clearing animates stars back
+                  setFeeling(s);
+                  latestFeelingRef.current = s;
+                  submitAsk(s);
+                }}
                 className="rounded-full border border-white/10 bg-white/[0.03] hover:border-white/30 hover:bg-white/[0.08] px-3 py-1 text-xs font-serif-fine italic text-white/60 hover:text-white transition-colors max-w-full truncate"
               >
                 {s}
