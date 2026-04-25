@@ -117,9 +117,7 @@ export function SearchBar({
   // without relying on stale closure state.
   const latestFeelingRef = useRef("");
 
-  // Debounce timers
-  const themeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const askDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // (no debounce timers — search is explicit-only)
 
   // Keep a stable ref to submitAsk so recognition callbacks always call
   // the version that sees the current verses/asking state.
@@ -141,11 +139,9 @@ export function SearchBar({
     askErrorTimerRef.current = setTimeout(() => setAskError(null), 5000);
   };
 
-  // Clean up debounce timers on unmount
+  // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
-      if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
       if (askErrorTimerRef.current) clearTimeout(askErrorTimerRef.current);
     };
   }, []);
@@ -202,22 +198,21 @@ export function SearchBar({
   // Keep the ref current after every render
   useEffect(() => { submitAskRef.current = submitAsk; });
 
-  // Theme input change — debounce 1500ms, also fires immediately on Enter
+  // Theme input change — NO auto-submit, only fires on button click or Enter
   const handleThemeChange = (value: string) => {
     setQ(value);
-    if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
-    themeDebounceRef.current = setTimeout(() => submitTheme(value), 3000);
+    if (!value.trim()) {
+      // User erased everything — clear results immediately
+      submitTheme("");
+    }
   };
 
-  // Ask input change — debounce 1500ms
+  // Ask input change — NO auto-submit, only fires on button click or Enter
   const handleAskChange = (value: string) => {
     setFeeling(value);
     latestFeelingRef.current = value;
-    if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
-    if (value.trim()) {
-      askDebounceRef.current = setTimeout(() => submitAsk(value), 3000);
-    } else {
-      // User erased everything — send any result stars back to the galaxy
+    if (!value.trim()) {
+      // User erased everything — send stars home
       onClear?.();
     }
   };
@@ -334,13 +329,12 @@ export function SearchBar({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
               submitTheme(q);
             }}
             className="relative"
           >
             <div className="flex items-center gap-3 border-b border-white/30 focus-within:border-white/80 transition-colors py-3">
-              <Search className="h-4 w-4 text-white/50" aria-hidden="true" />
+              <Search className="h-4 w-4 text-white/50 shrink-0" aria-hidden="true" />
               <input
                 type="text"
                 value={q}
@@ -350,42 +344,43 @@ export function SearchBar({
                 aria-label="Search by theme"
               />
               {q && (
-                <>
-                  <button
-                    type="submit"
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-white/20 bg-white/[0.06] hover:bg-white/[0.14] hover:border-white/40 text-white/70 hover:text-white transition-all text-[11px] font-serif-fine tracking-[0.12em] shrink-0"
-                    aria-label="Search"
-                  >
-                    Search
-                    <ArrowRight className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
-                      submitTheme("");
-                      onClear?.();
-                    }}
-                    className="p-1 text-white/40 hover:text-white/80 transition-colors shrink-0"
-                    aria-label="Clear search"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => {
+                    submitTheme("");
+                    onClear?.();
+                  }}
+                  className="p-1 text-white/40 hover:text-white/80 transition-colors shrink-0"
+                  aria-label="Clear search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               )}
+              {/* Always-visible search button */}
+              <button
+                type="submit"
+                className={`flex items-center justify-center w-8 h-8 rounded-full border transition-all shrink-0 ${
+                  q
+                    ? "border-white/40 bg-white/10 text-white hover:bg-white/20"
+                    : "border-white/10 bg-transparent text-white/20 cursor-default"
+                }`}
+                aria-label="Search"
+                tabIndex={q ? 0 : -1}
+              >
+                <ArrowRight className="h-4 w-4" />
+              </button>
             </div>
           </form>
         ) : (
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
               submitAsk(feeling);
             }}
             className="relative"
           >
             <div className="flex items-center gap-3 border-b border-white/30 focus-within:border-white/80 transition-colors py-3">
-              <Sparkles className="h-4 w-4 text-white/50" aria-hidden="true" />
+              <Sparkles className="h-4 w-4 text-white/50 shrink-0" aria-hidden="true" />
               <input
                 type="text"
                 value={liveText}
@@ -409,7 +404,7 @@ export function SearchBar({
                 <button
                   type="button"
                   onClick={toggleVoiceLang}
-                  className="flex items-center gap-1 p-1 text-white/40 hover:text-white/80 transition-colors"
+                  className="flex items-center gap-1 p-1 text-white/40 hover:text-white/80 transition-colors shrink-0"
                   aria-label={`Voice language: ${isArabicVoice ? "Arabic" : "English"}. Tap to switch.`}
                   title={`Voice: ${isArabicVoice ? "Arabic (ar-SA)" : "English (en-US)"}`}
                 >
@@ -423,53 +418,46 @@ export function SearchBar({
                 <button
                   type="button"
                   onClick={listening ? stopListening : startListening}
-                  className={`p-1 transition-colors ${listening ? "text-[#ffd700]" : "text-white/40 hover:text-white/80"}`}
-                  aria-label={
-                    listening ? "Stop listening" : "Start voice input"
-                  }
+                  className={`p-1 transition-colors shrink-0 ${listening ? "text-[#ffd700]" : "text-white/40 hover:text-white/80"}`}
+                  aria-label={listening ? "Stop listening" : "Start voice input"}
                   title={listening ? "Listening · tap to stop" : "Voice input"}
                 >
-                  {listening ? (
-                    <MicOff className="h-4 w-4" />
-                  ) : (
-                    <Mic className="h-4 w-4" />
-                  )}
+                  {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </button>
               )}
               {(feeling || interim) && (
-                <>
-                  <button
-                    type="submit"
-                    disabled={asking}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-white/20 bg-white/[0.06] hover:bg-white/[0.14] hover:border-white/40 text-white/70 hover:text-white disabled:opacity-40 transition-all text-[11px] font-serif-fine tracking-[0.12em] shrink-0"
-                    aria-label="Search"
-                  >
-                    {asking ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <>
-                        Search
-                        <ArrowRight className="h-3 w-3" />
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (listening) stopListening();
-                      setFeeling("");
-                      latestFeelingRef.current = "";
-                      setInterim("");
-                      if (askDebounceRef.current) clearTimeout(askDebounceRef.current);
-                      onClear?.();
-                    }}
-                    className="p-1 text-white/40 hover:text-white/80 transition-colors shrink-0"
-                    aria-label="Clear"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (listening) stopListening();
+                    setFeeling("");
+                    latestFeelingRef.current = "";
+                    setInterim("");
+                    onClear?.();
+                  }}
+                  className="p-1 text-white/40 hover:text-white/80 transition-colors shrink-0"
+                  aria-label="Clear"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               )}
+              {/* Always-visible search button */}
+              <button
+                type="submit"
+                disabled={asking}
+                className={`flex items-center justify-center w-8 h-8 rounded-full border transition-all shrink-0 ${
+                  feeling && !asking
+                    ? "border-white/40 bg-white/10 text-white hover:bg-white/20"
+                    : "border-white/10 bg-transparent text-white/20 cursor-default"
+                }`}
+                aria-label="Search"
+                tabIndex={feeling ? 0 : -1}
+              >
+                {asking
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <ArrowRight className="h-4 w-4" />
+                }
+              </button>
             </div>
             {askError && (
               <p className="mt-2 font-serif-fine text-xs italic text-white/55">
@@ -495,7 +483,6 @@ export function SearchBar({
               <button
                 key={s}
                 onClick={() => {
-                  if (themeDebounceRef.current) clearTimeout(themeDebounceRef.current);
                   submitTheme(s);
                 }}
                 className="rounded-full border border-white/10 bg-white/[0.03] hover:border-white/30 hover:bg-white/[0.08] px-3 py-1 text-xs font-serif-fine text-white/60 hover:text-white transition-colors"
