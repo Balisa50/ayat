@@ -25,6 +25,13 @@ export default function Home() {
   const [verses, setVerses] = useState<Verse[] | null>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Verse | null>(null);
+
+  // Mute the auto-reminder rail whenever a verse card is open. The card
+  // is the focal moment, the floating italic reminders should not bleed
+  // over it. Galaxy stars stay free, only the bottom UI is silenced.
+  useEffect(() => {
+    reminders.setMuted(!!selected);
+  }, [selected, reminders]);
   const [askReflection, setAskReflection] = useState<string | null>(null);
   const [isDaily, setIsDaily] = useState(false);
   const [entryDone, setEntryDone] = useState(false);
