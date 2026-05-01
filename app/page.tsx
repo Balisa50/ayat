@@ -32,6 +32,16 @@ export default function Home() {
   useEffect(() => {
     reminders.setMuted(!!selected);
   }, [selected, reminders]);
+
+  // Tag the document while a verse card is open. CSS in globals can hide
+  // any stray bottom-fixed UI that ever forgets to gate itself. This is
+  // a belt-and-braces guarantee on top of the conditional render below.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (selected) document.documentElement.dataset.cardOpen = "1";
+    else delete document.documentElement.dataset.cardOpen;
+    return () => { delete document.documentElement.dataset.cardOpen; };
+  }, [selected]);
   const [askReflection, setAskReflection] = useState<string | null>(null);
   const [isDaily, setIsDaily] = useState(false);
   const [entryDone, setEntryDone] = useState(false);
@@ -225,6 +235,7 @@ export default function Home() {
           pulseScores={pulseScores}
           dismissing={pulseDismissing}
           onSelectVerse={handleSelectVerse}
+          disabled={!!selected}
         />
       )}
 

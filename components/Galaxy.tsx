@@ -20,6 +20,12 @@ interface GalaxyProps {
   pulseScores?: Map<number, number>; // verse id → confidence 0-1 (highest = largest star)
   dismissing?: boolean;              // true = user cleared search; trigger return animation
   onSelectVerse: (v: Verse) => void;
+  /**
+   * When true, star clicks are ignored. The page sets this while a verse
+   * card is open so the user can pan around the galaxy without
+   * accidentally swapping the open verse for a different one.
+   */
+  disabled?: boolean;
 }
 
 function makeSpriteTexture(): THREE.Texture {
@@ -43,11 +49,11 @@ function makeSpriteTexture(): THREE.Texture {
   return tex;
 }
 
-export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, dismissing, onSelectVerse }: GalaxyProps) {
+export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, dismissing, onSelectVerse, disabled }: GalaxyProps) {
   return (
     <div className="fixed inset-0" style={{ zIndex: 0 }}>
       <Canvas
-        aria-label="Interactive Quran star field — 6,236 verses as stars. Tap any star to read the verse."
+        aria-label="Interactive Quran star field, 6,236 verses as stars. Tap any star to read the verse."
         role="img"
         camera={{ position: [0, 6, 60], fov: 55, near: 0.1, far: 600 }}
         dpr={[1, 2]}
@@ -64,13 +70,14 @@ export function Galaxy({ verses, matchedIds, pulseIds, pulseScores, dismissing, 
           pulseScores={pulseScores}
           dismissing={dismissing}
           onSelectVerse={onSelectVerse}
+          disabled={disabled}
         />
         <OrbitControls
           enablePan={false}
           enableZoom
           minDistance={10}
           maxDistance={160}
-          zoomSpeed={1.4}
+          zoomSpeed={0.7}
           rotateSpeed={0.55}
           autoRotate={matchedIds.size === 0 && !pulseIds?.size}
           autoRotateSpeed={0.12}
@@ -104,6 +111,7 @@ function ParticleField({
   pulseScores,
   dismissing,
   onSelectVerse,
+  disabled,
 }: {
   verses: Verse[];
   matchedIds: Set<number>;
@@ -111,7 +119,12 @@ function ParticleField({
   pulseScores?: Map<number, number>;
   dismissing?: boolean;
   onSelectVerse: (v: Verse) => void;
+  disabled?: boolean;
 }) {
+  // Hold the latest disabled flag in a ref so the click handler closure
+  // always reads the current value without rebinding the listener.
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const pointsRef = useRef<THREE.Points>(null!);
   const { camera, raycaster, pointer, gl } = useThree();
   const sprite = useMemo(() => makeSpriteTexture(), []);
@@ -485,11 +498,18 @@ function ParticleField({
   }, [sprite]);
 
   // ── Pointer / swipe tracking for impulse ─────────────────────────────────
+  // We track active pointer count so pinch-to-zoom (2 fingers) is NEVER
+  // mistaken for a swipe — those events go to OrbitControls only.
   useEffect(() => {
     const canvas = gl.domElement;
     let lastTime = 0;
+    let activePointers = 0; // count of currently pressed pointers
 
     const onDown = (e: PointerEvent) => {
+      activePointers++;
+      // Only start swipe tracking for the first finger, and only when
+      // it is a true single-touch (not a pinch). isPrimary guards secondary fingers.
+      if (!e.isPrimary) return;
       swipeRef.current.prevX = e.clientX;
       swipeRef.current.prevY = e.clientY;
       swipeRef.current.vx = 0;
@@ -499,7 +519,12 @@ function ParticleField({
     };
 
     const onMove = (e: PointerEvent) => {
-      if (!swipeRef.current.active) return;
+      // If there are 2+ fingers on screen it's a pinch — cancel swipe impulse
+      if (activePointers > 1) {
+        swipeRef.current.active = false;
+        return;
+      }
+      if (!e.isPrimary || !swipeRef.current.active) return;
       const now = performance.now();
       const dt = Math.max(1, now - lastTime);
       swipeRef.current.vx = (e.clientX - swipeRef.current.prevX) / dt;
@@ -509,18 +534,19 @@ function ParticleField({
       lastTime = now;
     };
 
-    const onUp = () => {
+    const onUp = (e: PointerEvent) => {
+      activePointers = Math.max(0, activePointers - 1);
+      if (!e.isPrimary) return;
       if (!swipeRef.current.active) return;
       swipeRef.current.active = false;
+
+      // Don't apply impulse if this was part of a pinch gesture
+      if (activePointers > 0) return;
 
       const { vx, vy } = swipeRef.current;
       const speed = Math.sqrt(vx * vx + vy * vy);
       if (speed < 0.5) return; // ignore slow drags (camera rotate)
 
-      // Apply impulse in camera-relative space so the stars always follow
-      // the swipe direction regardless of how OrbitControls has rotated the camera.
-      // screen-right (+vx) → camera's right axis
-      // screen-down  (+vy) → negative camera's up axis
       const cam = cameraRef.current;
       const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
       const upVec    = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
@@ -538,12 +564,12 @@ function ParticleField({
 
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
-    canvas.addEventListener("pointerup", onUp);
+    canvas.addEventListener("pointerup",   onUp);
     canvas.addEventListener("pointercancel", onUp);
     return () => {
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
-      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointerup",   onUp);
       canvas.removeEventListener("pointercancel", onUp);
     };
   }, [gl, verses.length]);
@@ -846,6 +872,9 @@ function ParticleField({
   }
 
   const handleClick = () => {
+    // Card is open: ignore every star click. The user can still pan/zoom
+    // the galaxy, only the click-to-open path is silenced.
+    if (disabledRef.current) return;
     if (!pointsRef.current) return;
     raycaster.setFromCamera(pointer, camera);
     raycaster.params.Points = { threshold: 0.7 };

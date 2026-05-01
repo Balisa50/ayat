@@ -60,3 +60,14 @@ body {
   50%      { opacity: 1.0; }
 }
 .breathe { animation: breathe 4s ease-in-out infinite; }
+
+/*
+  When a verse card is open, suppress any UI that lives at the bottom
+  of the viewport (search bar, suggestion chips, reminder rail). The
+  Galaxy canvas at z-0 stays untouched. This guarantees the card is
+  the only foreground element regardless of which component
+  forgot to gate itself on the `selected` state.
+*/
+html[data-card-open="1"] [class*="fixed bottom-"] {
+  display: none !important;
+}
