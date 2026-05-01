@@ -318,8 +318,9 @@ export function VerseCard({
     onEndedRef.current = () => {
       setCurrentWord(-1);
 
-      // ── Repeat: replay this exact verse, ignore auto-advance ───────────
-      if (repeatRef.current) {
+      // ── Repeat (no Continue): replay this exact verse only ─────────────
+      // When Continue is also active, let auto-advance handle looping instead.
+      if (repeatRef.current && !autoRef.current) {
         const a = audioRef.current;
         if (a) {
           a.currentTime = 0;
@@ -410,6 +411,23 @@ export function VerseCard({
           (v) => v.surah === cv.surah && v.ayah === cv.ayah + 1,
         );
         if (!nextVFallback) {
+          // End of surah — if Repeat is also on, loop back to verse 1
+          if (repeatRef.current) {
+            const firstVerse = allVersesRef.current.find(
+              (v) => v.surah === cv.surah && v.ayah === 1,
+            );
+            if (firstVerse) {
+              setPlaying(false);
+              audioRef.current = null; // trigger fallbackAutoStart
+              setTextVisible(false);
+              chainVerseRef.current = firstVerse;
+              setChainVerse(firstVerse);
+              setAutoStatus(`${firstVerse.surahName} · looping`);
+              prefetchDoneRef.current = false;
+              setTimeout(() => setTextVisible(true), 80);
+              return;
+            }
+          }
           autoRef.current = false;
           setAutoActive(false);
           setAutoStatus("End of Surah");
@@ -493,10 +511,27 @@ export function VerseCard({
     };
   }, [verse]);
 
-  const words = useMemo(
-    () => currentVerse?.arabic.split(/\s+/).filter(Boolean) ?? [],
-    [currentVerse],
-  );
+  // Bismillah occupies the first 4 words of verse 1 for all surahs except
+  // Al-Fatiha (surah 1, where verse 1 IS the Bismillah) and
+  // At-Tawbah (surah 9, which has no Bismillah).
+  // We split it out so it renders separately and word-highlight indices
+  // stay in sync with the recitation audio, which skips the Bismillah.
+  const BISMILLAH_WORD_COUNT = 4;
+  const { words, bismillahWords } = useMemo(() => {
+    const all = currentVerse?.arabic.split(/\s+/).filter(Boolean) ?? [];
+    if (
+      currentVerse?.ayah === 1 &&
+      currentVerse.surah !== 1 &&
+      currentVerse.surah !== 9 &&
+      all.length > BISMILLAH_WORD_COUNT
+    ) {
+      return {
+        bismillahWords: all.slice(0, BISMILLAH_WORD_COUNT),
+        words: all.slice(BISMILLAH_WORD_COUNT),
+      };
+    }
+    return { bismillahWords: null, words: all };
+  }, [currentVerse]);
 
   // ── Manual play / pause ──────────────────────────────────────────────────
   const toggleAudio = useCallback(() => {
@@ -567,9 +602,14 @@ export function VerseCard({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-30 flex items-center justify-center px-4 py-8"
-          onClick={onClose}
+          className="fixed inset-0 z-30 flex items-center justify-center px-4 py-8 pointer-events-none"
         >
+          {/*
+            Outer wrapper has pointer-events-none so clicks on the galaxy
+            (top, sides, bottom) pass through to the canvas behind. Only
+            the inner card and the X button intercept clicks. The card is
+            dismissed exclusively via the X, never by clicking outside.
+          */}
           <motion.div
             initial={{ opacity: 0, y: 24, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -577,8 +617,7 @@ export function VerseCard({
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
             ref={bodyRef}
             onScroll={onBodyScroll}
-            className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl p-6 md:p-10 shadow-2xl max-h-[88vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl p-6 md:p-10 shadow-2xl max-h-[88vh] overflow-y-auto pointer-events-auto"
           >
             <button
               onClick={onClose}
@@ -607,6 +646,14 @@ export function VerseCard({
             {/* ── Verse text — only this section fades during transitions ── */}
             <div style={{ opacity: textVisible ? 1 : 0, transition: "opacity 80ms ease" }}>
               <div className="min-h-[7rem] mb-6">
+                {bismillahWords && (
+                  <div className="mb-4">
+                    <p dir="rtl" className="arabic text-center text-[clamp(1rem,2.2vw,1.4rem)] text-white/38 leading-relaxed tracking-wide">
+                      {bismillahWords.join(" ")}
+                    </p>
+                    <div className="mt-3 border-t border-white/10" />
+                  </div>
+                )}
                 <p dir="rtl" className="arabic text-right text-[clamp(1.5rem,3.5vw,2.25rem)] text-white leading-relaxed">
                   {words.map((w, i) => (
                     <span

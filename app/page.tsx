@@ -32,16 +32,21 @@ export default function Home() {
   // Detective state — stars pulse based on AI match.
   const [pulseIds, setPulseIds] = useState<Set<number> | undefined>(undefined);
   const [pulseScores, setPulseScores] = useState<Map<number, number>>(new Map());
+  // True while the "clear search" return animation is in progress
+  const [pulseDismissing, setPulseDismissing] = useState(false);
+  const pulseDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Guided tour state ────────────────────────────────────────────────────
   // -1 = hidden; 0–(TOUR_STEPS-1) = active step
   const [tourStep, setTourStep] = useState<number>(-1);
 
-  // Start tour for first-time visitors once the galaxy is ready
+  // Start tour for first-time visitors once the galaxy is ready.
+  // Mark as seen immediately so closing mid-tour never causes it to repeat.
   useEffect(() => {
     if (!entryDone || !verses) return;
     try {
       if (!localStorage.getItem(TOUR_KEY)) {
+        localStorage.setItem(TOUR_KEY, "1");
         const t = setTimeout(() => setTourStep(0), 700);
         return () => clearTimeout(t);
       }
@@ -129,9 +134,16 @@ export default function Home() {
   }, [verses, entryDone, tourStep]);
 
   // ── Clear detective pulse ─────────────────────────────────────────────────
+  // Triggers the "fly home" return animation first; clears state after it lands.
   const clearPulse = useCallback(() => {
-    setPulseIds(undefined);
-    setPulseScores(new Map());
+    if (pulseDismissTimerRef.current) clearTimeout(pulseDismissTimerRef.current);
+    setPulseDismissing(true);
+    pulseDismissTimerRef.current = setTimeout(() => {
+      setPulseIds(undefined);
+      setPulseScores(new Map());
+      setPulseDismissing(false);
+      pulseDismissTimerRef.current = null;
+    }, 3200); // matches RETURN_SECS (2.8s) + small buffer
   }, []);
 
   // ── Detective result handler ──────────────────────────────────────────────
@@ -204,6 +216,7 @@ export default function Home() {
           matchedIds={matched}
           pulseIds={pulseIds}
           pulseScores={pulseScores}
+          dismissing={pulseDismissing}
           onSelectVerse={handleSelectVerse}
         />
       )}
@@ -211,14 +224,19 @@ export default function Home() {
       {/* Entry animation */}
       <Entry onDone={() => setEntryDone(true)} />
 
-      {/* Search bar */}
-      {entryDone && verses && (
+      {/*
+        Search bar — hidden while a verse card is open. The card already
+        owns the user's focus; the bar showing through behind looks broken
+        and steals taps near the bottom of the screen.
+      */}
+      {entryDone && verses && !selected && (
         <SearchBar
           onSearch={(q) => { setQuery(q); if (q) clearPulse(); }}
           activeQuery={query}
           matchCount={query ? matched.size : null}
           verses={verses}
           onDetective={handleDetective}
+          onClear={clearPulse}
         />
       )}
 
