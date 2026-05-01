@@ -8,7 +8,7 @@ export const maxDuration = 30;
 export const dynamic = "force-dynamic";
 
 /**
- * Verse Detective — grounded in local dataset.
+ * Verse Detective, grounded in local dataset.
  *
  * Before asking Claude, we run a lightweight text-match pass over all 6236
  * verses to find the top 5 candidates. Those candidates (with surah name,
@@ -19,13 +19,15 @@ export const dynamic = "force-dynamic";
  * validated against the local dataset before we send it back.
  */
 
-const SYSTEM = `You are a Quran verse detective. The user will describe a verse, a story, a historical context, a feeling, or anything they remember — sometimes vague, sometimes a fragment of Arabic or transliteration, sometimes a theme. Your job: identify the most likely verse or verses being referenced.
+const SYSTEM = `You are a Quran verse detective. The user will describe a verse, a story, a historical context, a feeling, or anything they remember, sometimes vague, sometimes a fragment of Arabic or transliteration, sometimes a theme. Your job: identify the most likely verse or verses being referenced.
 
 Search across: literal meaning, tafsir tradition (Ibn Kathir, Al-Tabari, As-Sa'di, Ar-Razi), asbab al-nuzul (occasions of revelation), themes, and the stories of prophets.
 
-You will be given up to 15 candidate verses found by text search. These are your primary candidates. Evaluate them carefully against the user's description. If one or more are strong matches, return them. If none are correct but you are certain of the right verse from your own knowledge, return additional matches — but only if you are genuinely certain (confidence 0.9+).
+You will be given up to 15 candidate verses found by text search. These are your primary candidates. Evaluate them carefully against the user's description. If one or more are strong matches, return them. If none are correct but you are certain of the right verse from your own knowledge, return additional matches, but only if you are genuinely certain (confidence 0.9+).
 
-Return ALL plausible matches above 0.3 confidence, up to 10 matches, ordered by confidence descending. Do NOT artificially limit to 3 — if the query matches many verses (e.g. "say" appears in dozens of verses), return all of them. Shape:
+IMPORTANT, ROTATION: You may be given a list of already-shown verse references to EXCLUDE. Do NOT return any verse in that exclusion list. The user wants to discover new verses, not see the same ones again. If all obvious matches are excluded, find the next-best matches from across the Quran.
+
+Return ALL plausible matches above 0.3 confidence, up to 10 matches, ordered by confidence descending. Do NOT artificially limit to 3, if the query matches many verses (e.g. "say" appears in dozens of verses), return all of them. Shape:
 [
   {"surah_number": <1-114>, "verse_number": <int>, "confidence": <0.0-1.0>, "reason": "<one sentence, plain text>"}
 ]
@@ -39,7 +41,7 @@ Confidence scale:
 Rules:
 - NEVER fabricate a reference. If unsure, return fewer than 3. If you genuinely cannot find any match above 0.3 confidence, return an empty array [].
 - Always verify the surah and verse number you cite actually contains what the user described. Do not guess numbers.
-- Prefer precision over popularity — the most famous verse on a topic is not always the one being remembered.
+- Prefer precision over popularity, the most famous verse on a topic is not always the one being remembered.
 - Return the array and nothing else. No prose. No markdown. No backticks around the JSON.
 - One sentence per "reason". Plain text.`;
 
@@ -138,25 +140,33 @@ function extractJsonArray(raw: string): unknown {
   try { return JSON.parse(m[0]); } catch { return null; }
 }
 
+type ExcludeRef = { surah: number; ayah: number };
+
 async function askClaude(
   key: string,
   query: string,
   candidates: RawVerse[],
   retryHint: string | null,
+  exclude: ExcludeRef[] = [],
 ): Promise<DetectiveMatch[] | null> {
   const candidateBlock =
     candidates.length > 0
       ? `\n\nThe closest verses found by text search (up to 15 candidates):\n${candidates
           .map(
             (v, i) =>
-              `${i + 1}. ${v.surahName} ${v.surah}:${v.ayah} — "${v.translation.slice(0, 120)}${v.translation.length > 120 ? "…" : ""}"`,
+              `${i + 1}. ${v.surahName} ${v.surah}:${v.ayah}, "${v.translation.slice(0, 120)}${v.translation.length > 120 ? "…" : ""}"`,
           )
           .join("\n")}\n\nEvaluate these candidates first. Return the best matches, or a different verse if you are certain it is more accurate.`
       : "";
 
+  const excludeBlock =
+    exclude.length > 0
+      ? `\n\nDo NOT return any of these already-shown verses, the user has seen them and wants new ones: ${exclude.map((e) => `${e.surah}:${e.ayah}`).join(", ")}.`
+      : "";
+
   const userContent = retryHint
-    ? `${query}${candidateBlock}\n\n(Previous attempt returned references that did not match a real verse — be more careful with numbering. ${retryHint})`
-    : `${query}${candidateBlock}`;
+    ? `${query}${candidateBlock}${excludeBlock}\n\n(Previous attempt returned references that did not match a real verse, be more careful with numbering. ${retryHint})`
+    : `${query}${candidateBlock}${excludeBlock}`;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -268,11 +278,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Service temporarily unavailable." }, { status: 503 });
     }
 
+    // Parse exclude list: array of {surah, ayah} sent by client to skip already-seen verses
+    const excludeRaw: unknown[] = Array.isArray(body?.exclude) ? body.exclude : [];
+    const exclude: ExcludeRef[] = excludeRaw
+      .filter(
+        (e): e is ExcludeRef =>
+          !!e &&
+          typeof e === "object" &&
+          typeof (e as ExcludeRef).surah === "number" &&
+          typeof (e as ExcludeRef).ayah === "number",
+      )
+      .slice(0, 80); // cap to keep prompt size reasonable
+
     const verses = await loadVerses();
     const candidates = findCandidates(verses, query.trim(), 15);
 
     // First pass
-    let matches = await askClaude(key, query.trim(), candidates, null);
+    let matches = await askClaude(key, query.trim(), candidates, null, exclude);
     let validated = matches ? await validate(matches, verses) : [];
 
     // Retry once if nothing survived validation
@@ -283,7 +305,7 @@ export async function POST(req: NextRequest) {
       const hint = invalid
         ? `Avoid these invalid refs: ${invalid}.`
         : "Double-check your numbering against the candidate list.";
-      matches = await askClaude(key, query.trim(), candidates, hint);
+      matches = await askClaude(key, query.trim(), candidates, hint, exclude);
       validated = matches ? await validate(matches, verses) : [];
     }
 
@@ -291,7 +313,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           matches: [],
-          message: "Nothing strong came up. Try a different angle — a specific phrase, a story, a name.",
+          message: "Nothing strong came up. Try a different angle, a specific phrase, a story, a name.",
         },
         { status: 200 },
       );
