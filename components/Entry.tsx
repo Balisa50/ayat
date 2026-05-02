@@ -20,33 +20,39 @@ function markEntryShown(): void {
 }
 
 export function Entry({ onDone }: { onDone: () => void }) {
-  const [show] = useState(() => shouldShowEntry());
+  // Hydration-safe init: server cannot read localStorage, so we start
+  // with `show=false` on both server and client. After mount we run
+  // shouldShowEntry() in an effect and flip to true if the cooldown
+  // has elapsed. This kills React error #418 while preserving the
+  // every-12-hours animation gate.
+  const [show, setShow] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [phase, setPhase] = useState<"line" | "bismillah" | "bang" | "done">("line");
 
-  // If cooldown hasn't elapsed, skip the animation entirely.
   useEffect(() => {
-    if (!show) { onDone(); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!show) return;
-    markEntryShown();
-    const t1 = setTimeout(() => setPhase("bismillah"), 2200);
-    const t2 = setTimeout(() => setPhase("bang"), 3800);
-    const t3 = setTimeout(() => {
-      setPhase("done");
+    setMounted(true);
+    const willShow = shouldShowEntry();
+    if (willShow) {
+      setShow(true);
+      markEntryShown();
+      const t1 = setTimeout(() => setPhase("bismillah"), 2200);
+      const t2 = setTimeout(() => setPhase("bang"), 3800);
+      const t3 = setTimeout(() => {
+        setPhase("done");
+        onDone();
+      }, 5600);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    } else {
       onDone();
-    }, 5600);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!show || phase === "done") return null;
+  if (!mounted || !show || phase === "done") return null;
 
   return (
     <div
