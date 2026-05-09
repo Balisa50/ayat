@@ -139,7 +139,12 @@ Write the five sections. Plain text only, no asterisks, no markdown.`;
  });
 
  if (!res.ok) {
- return NextResponse.json({ context: null }, { status: 502 });
+ const body = await res.text().catch(() => "");
+ const paused = /credit balance|credit_balance|invalid_request_error.*credit|authentication_error|invalid x-api-key/i.test(body);
+ return NextResponse.json(
+ { context: null, paused, error: paused ? "AI commentary is paused — between API top-ups." : "AI temporarily unreachable." },
+ { status: paused ? 503 : 502 },
+ );
  }
 
  const data = await res.json();

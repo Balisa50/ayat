@@ -184,7 +184,13 @@ async function askClaude(
  }),
  });
 
- if (!res.ok) return null;
+ if (!res.ok) {
+ const text = await res.text().catch(() => "");
+ if (/credit balance|credit_balance|invalid_request_error.*credit|authentication_error|invalid x-api-key/i.test(text)) {
+ throw new Error("__AI_PAUSED__");
+ }
+ return null;
+ }
 
  const data = await res.json();
  const raw =
@@ -320,7 +326,13 @@ export async function POST(req: NextRequest) {
  }
 
  return NextResponse.json({ matches: validated });
- } catch {
+ } catch (err) {
+ if (err instanceof Error && err.message === "__AI_PAUSED__") {
+ return NextResponse.json(
+ { matches: [], paused: true, error: "AI commentary is paused — between API top-ups." },
+ { status: 503 },
+ );
+ }
  return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
  }
 }

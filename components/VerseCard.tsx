@@ -113,6 +113,9 @@ export function VerseCard({
 
  const [context, setContext] = useState<string | null>(null);
  const [loadingContext, setLoadingContext] = useState(false);
+ // Click-to-reveal: only fetch the AI tafsir when the user explicitly asks
+ // for it. Saves API credits on verses the reader only skims.
+ const [contextRequested, setContextRequested] = useState(false);
 
  const [reciterId, setReciterId] = useState<string>("7");
  const [reciterOpen, setReciterOpen] = useState(false);
@@ -208,13 +211,22 @@ export function VerseCard({
  try { sessionStorage.setItem(RECITER_STORAGE_KEY, reciterId); } catch {}
  }, [reciterId]);
 
- // ── AI analysis (skipped during auto-play) ───────────────────────────────
+ // Reset analysis state on each verse change. Fetch is gated on
+ // contextRequested — only fires when the user taps Reveal Analysis.
+ useEffect(() => {
+ setContext(null);
+ setLoadingContext(false);
+ setContextRequested(false);
+ readFullyTriggeredRef.current = false;
+ }, [currentVerse]);
+
+ // ── AI analysis (only when the user explicitly asks) ────────────────────
  useEffect(() => {
  if (!currentVerse) return;
- if (autoActive) { setContext(null); setLoadingContext(false); return; }
- setContext(null);
+ if (!contextRequested) return;
+ if (autoActive) return;
+ if (context || loadingContext) return;
  setLoadingContext(true);
- readFullyTriggeredRef.current = false;
  const ctrl = new AbortController();
  fetch("/api/context", {
  method: "POST",
@@ -234,7 +246,7 @@ export function VerseCard({
  .finally(() => setLoadingContext(false));
  return () => ctrl.abort();
  // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [currentVerse, autoActive]);
+ }, [currentVerse, contextRequested, autoActive]);
 
  // ── Audio fetch for current verse ────────────────────────────────────────
  // Guard: if skipAudioResetRef is true we already have the audio ready from
@@ -809,6 +821,15 @@ export function VerseCard({
  </p>
  ) : (
  <>
+ {!contextRequested && !loadingContext && !context && (
+ <button
+ onClick={() => setContextRequested(true)}
+ className="group w-full flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-5 py-3.5 font-serif-fine text-[11px] uppercase tracking-[0.22em] text-white/65 hover:text-white transition-colors"
+ >
+ <Sparkles className="h-3.5 w-3.5 text-white/55 group-hover:text-white" />
+ Reveal AI analysis
+ </button>
+ )}
  {loadingContext && (
  <div className="space-y-3 animate-pulse">
  <div className="h-2 w-24 rounded bg-white/10" />
@@ -861,8 +882,13 @@ export function VerseCard({
  )}
  </motion.div>
  )}
- {!loadingContext && !context && (
- <p className="font-serif-fine text-white/40 text-xs italic">Context unavailable for this verse.</p>
+ {contextRequested && !loadingContext && !context && (
+ <div className="rounded-xl border border-white/8 bg-white/[0.02] px-5 py-4 text-center">
+ <p className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">AI commentary is paused</p>
+ <p className="font-serif-fine italic text-white/65 text-[13px] leading-relaxed">
+ We&apos;re between API top-ups. The verse, translation, recitation, and the rest of the app work as normal. The verse itself is more than enough — sit with it.
+ </p>
+ </div>
  )}
  </>
  )}
