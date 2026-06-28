@@ -10,11 +10,11 @@ export const dynamic = "force-dynamic";
 /**
  * Verse Detective, grounded in local dataset.
  *
- * Before asking Claude, we run a lightweight text-match pass over all 6236
+ * Before asking the model, we run a lightweight text-match pass over all 6236
  * verses to find the top 5 candidates. Those candidates (with surah name,
- * number, and translation snippet) are injected into the Claude prompt.
+ * number, and translation snippet) are injected into the model prompt.
  * This grounds the model's response in real verse data rather than relying on
- * its memory alone. Claude then picks the best match from the candidates, or
+ * its memory alone. The model then picks the best match from the candidates, or
  * returns a different verse if it is certain. Every returned reference is
  * validated against the local dataset before we send it back.
  */

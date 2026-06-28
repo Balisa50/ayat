@@ -2,7 +2,7 @@
  * Lightweight in-memory rate limiter.
  *
  * Designed for Next.js Edge / Node serverless - works per-instance.
- * Good enough for Anthropic API cost-protection on a single-region
+ * Good enough for LLM API cost-protection on a single-region
  * Vercel deployment. Swap for Redis/Vercel KV if you need cross-instance
  * coordination at scale.
  */
