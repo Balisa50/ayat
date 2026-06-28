@@ -145,7 +145,7 @@ export function FloatingReciteButton({
       }}
     >
       {playing ? (
-        /* Collapsed "O" mode — small pulsing circle with pause icon */
+        /* Collapsed "O" mode - small pulsing circle with pause icon */
         <span
           style={{
             display: "flex",
