@@ -25,15 +25,15 @@ const nextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           // Stop browsers from MIME-sniffing responses
           { key: "X-Content-Type-Options", value: "nosniff" },
-          // Minimal referrer — don't leak the full URL to third parties
+          // Minimal referrer - don't leak the full URL to third parties
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          // Permissions Policy — AYAT does not use camera, geolocation, or payment
+          // Permissions Policy - AYAT does not use camera, geolocation, or payment
           {
             key: "Permissions-Policy",
             value: "camera=(), geolocation=(), payment=(), usb=()",
-            // Note: microphone intentionally NOT denied — voice search (Ask) uses it
+            // Note: microphone intentionally NOT denied - voice search (Ask) uses it
           },
-          // HSTS — only add once you're 100% HTTPS-only on all domains
+          // HSTS - only add once you're 100% HTTPS-only on all domains
           {
             key: "Strict-Transport-Security",
             value: "max-age=63072000; includeSubDomains; preload",
