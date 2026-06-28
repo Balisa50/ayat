@@ -13,20 +13,20 @@ export const dynamic = "force-dynamic";
  *    https://api.quran.com/api/v4/recitations/{id}/by_ayah/{surah}:{ayah}
  *    Returns audio URL + word-level timing segments.
  *    Verified IDs:
- *      1  — AbdulBaset AbdulSamad (Mujawwad)
- *      2  — AbdulBaset AbdulSamad (Murattal)
- *      3  — Abdur-Rahman As-Sudais
- *      4  — Abu Bakr Al-Shatri
- *      5  — Hani Ar-Rifai
- *      6  — Mahmoud Khalil Al-Husary
- *      7  — Mishari Rashid Al-Afasy  (default)
- *      8  — Mohamed Siddiq Al-Minshawi (Mujawwad)
- *      9  — Mohamed Siddiq Al-Minshawi (Murattal)
- *      10 — Sa'ud Ash-Shuraym
+ *      1  - AbdulBaset AbdulSamad (Mujawwad)
+ *      2  - AbdulBaset AbdulSamad (Murattal)
+ *      3  - Abdur-Rahman As-Sudais
+ *      4  - Abu Bakr Al-Shatri
+ *      5  - Hani Ar-Rifai
+ *      6  - Mahmoud Khalil Al-Husary
+ *      7  - Mishari Rashid Al-Afasy  (default)
+ *      8  - Mohamed Siddiq Al-Minshawi (Mujawwad)
+ *      9  - Mohamed Siddiq Al-Minshawi (Murattal)
+ *      10 - Sa'ud Ash-Shuraym
  *
  * 2. EveryAyah CDN (special string IDs):
  *    For reciters not on Quran.com v4 (e.g. Saad Al-Ghamdi, Maher Al-Muaiqly).
- *    No word-level segments — word highlighting disabled for these.
+ *    No word-level segments - word highlighting disabled for these.
  *    Format: https://mirrors.quranicaudio.com/everyayah/{folder}/SSSAAA.mp3
  */
 
@@ -36,7 +36,7 @@ const CDN_RECITERS: Record<string, string> = {
   // Original two
   ghamdi:    "Ghamadi_40kbps",
   muaiqly:   "MaherAlMuaiqly128kbps",
-  // New additions — all confirmed available
+  // New additions - all confirmed available
   ayyoub:    "Muhammad_Ayyoub_128kbps",
   dossari:   "Yasser_Ad-Dussary_128kbps",
   qatami:    "Nasser_Alqatami_128kbps",
@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
     const filename = `${zeroPad(surahNum, 3)}${zeroPad(ayahNum, 3)}.mp3`;
     const rawAudio = `https://everyayah.com/data/${folder}/${filename}`;
     const audioUrl = `/api/audio?u=${encodeURIComponent(rawAudio)}`;
-    // No timing segments from CDN — word highlighting disabled.
+    // No timing segments from CDN - word highlighting disabled.
     return NextResponse.json({ audioUrl, segments: [] });
   }
 
