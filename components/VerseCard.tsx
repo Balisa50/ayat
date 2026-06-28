@@ -212,7 +212,7 @@ export function VerseCard({
  }, [reciterId]);
 
  // Reset analysis state on each verse change. Fetch is gated on
- // contextRequested — only fires when the user taps Reveal Analysis.
+ // contextRequested - only fires when the user taps Reveal Analysis.
  useEffect(() => {
  setContext(null);
  setLoadingContext(false);
@@ -886,7 +886,7 @@ export function VerseCard({
  <div className="rounded-xl border border-white/8 bg-white/[0.02] px-5 py-4 text-center">
  <p className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">AI commentary is paused</p>
  <p className="font-serif-fine italic text-white/65 text-[13px] leading-relaxed">
- We&apos;re between API top-ups. The verse, translation, recitation, and the rest of the app work as normal. The verse itself is more than enough — sit with it.
+ We&apos;re between API top-ups. The verse, translation, recitation, and the rest of the app work as normal. The verse itself is more than enough - sit with it.
  </p>
  </div>
  )}
