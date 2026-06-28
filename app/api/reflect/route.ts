@@ -329,7 +329,7 @@ export async function POST(req: NextRequest) {
  } catch (err) {
  if (err instanceof Error && err.message === "__AI_PAUSED__") {
  return NextResponse.json(
- { matches: [], paused: true, error: "AI commentary is paused — between API top-ups." },
+ { matches: [], paused: true, error: "AI commentary is paused - between API top-ups." },
  { status: 503 },
  );
  }
