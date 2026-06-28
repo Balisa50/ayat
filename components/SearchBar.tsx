@@ -172,7 +172,7 @@ export function SearchBar({
  const d = await r.json();
  if (!r.ok) {
  if (d.paused || r.status === 503) {
- showAskError("AI search is paused — between API top-ups. The verse, recitation, and the rest of the app are working normally.");
+ showAskError("AI search is paused - between API top-ups. The verse, recitation, and the rest of the app are working normally.");
  } else {
  showAskError(d.error ?? "Something went wrong.");
  }
