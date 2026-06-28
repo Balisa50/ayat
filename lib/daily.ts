@@ -2,7 +2,7 @@
  * Daily ayah selector.
  *
  * Everyone on a given calendar day gets the same verse. The choice is
- * deterministic — seeded by YYYY-MM-DD — so the app feels like the verse
+ * deterministic - seeded by YYYY-MM-DD - so the app feels like the verse
  * was waiting for you, not rolled at random.
  *
  * We bias away from the handful of verses everyone already quotes (the
@@ -12,7 +12,7 @@
 
 import type { Verse } from "./types";
 
-// Overquoted references — skip these unless the seed has no other option.
+// Overquoted references - skip these unless the seed has no other option.
 const OVERQUOTED: ReadonlySet<string> = new Set([
   "2:255", // Ayat al-Kursi
   "2:286", // last verse of Al-Baqarah
