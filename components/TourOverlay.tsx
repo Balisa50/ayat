@@ -19,7 +19,7 @@ const STEPS: StepDef[] = [
     type: "welcome",
     title: "6,236 stars.\nEach one is a verse.",
     lines: [
-      "AYAT renders the entire Quran as a living galaxy. Verses that share a theme cluster together — like constellations of meaning.",
+      "AYAT renders the entire Quran as a living galaxy. Verses that share a theme cluster together - like constellations of meaning.",
       "Blue stars = Meccan surahs (faith, soul, God)  ·  Gold = Medinan (law, community, ethics)",
       "Three things to try →  tap a star  ·  search a theme  ·  describe a verse by voice",
     ],
@@ -28,21 +28,21 @@ const STEPS: StepDef[] = [
     type: "pill",
     eyebrow: "Step 1 of 3",
     title: "Tap any star.",
-    sub: "Stars are everywhere — look around the field, not just the center.\nBlue = Meccan · Gold = Medinan · Drag to orbit · Pinch / scroll to zoom",
-    hint: "Go ahead — tap any star you see",
+    sub: "Stars are everywhere - look around the field, not just the center.\nBlue = Meccan · Gold = Medinan · Drag to orbit · Pinch / scroll to zoom",
+    hint: "Go ahead - tap any star you see",
   },
   {
     type: "top",
     eyebrow: "Step 2 of 3  ·  Theme Search",
     title: "Type a theme.\nThe galaxy answers.",
-    body: "Type FORGIVENESS, PATIENCE, GRIEF, LIGHT — anything.\n\nEvery verse carrying that meaning lights up. The rest dims. You're looking at a constellation of meaning.\n\nTry one now ↓",
+    body: "Type FORGIVENESS, PATIENCE, GRIEF, LIGHT - anything.\n\nEvery verse carrying that meaning lights up. The rest dims. You're looking at a constellation of meaning.\n\nTry one now ↓",
     arrowLabel: "Type in the search bar below ↓",
   },
   {
     type: "top",
     eyebrow: "Step 3 of 3  ·  Verse Detective",
     title: "Half-remember a verse?\nJust describe it.",
-    body: "Tap Ask, then type — or tap the mic and speak in Arabic or English.\n\n\"the verse about iron being sent down\"\n\"God is closer than your jugular vein\"\n\"two seas that don't mix\"\n\nIt finds the verse. Try it ↓",
+    body: "Tap Ask, then type - or tap the mic and speak in Arabic or English.\n\n\"the verse about iron being sent down\"\n\"God is closer than your jugular vein\"\n\"two seas that don't mix\"\n\nIt finds the verse. Try it ↓",
     arrowLabel: "Tap Ask in the bar below ↓",
   },
   {
@@ -122,7 +122,7 @@ function WelcomeStep({ def, onNext, onEnd }: { def: Extract<StepDef, { type: "we
         {def.title}
       </motion.h1>
 
-      {/* Three-line explainer — each line fades in separately */}
+      {/* Three-line explainer - each line fades in separately */}
       <div style={{ maxWidth: 460, marginBottom: "2.25rem", display: "flex", flexDirection: "column", gap: "0.85rem" }}>
         {def.lines.map((line, i) => (
           <motion.p
@@ -183,7 +183,7 @@ function WelcomeStep({ def, onNext, onEnd }: { def: Extract<StepDef, { type: "we
   );
 }
 
-// ── Pill (step 1 — tap a star) ─────────────────────────────────────────────
+// ── Pill (step 1 - tap a star) ─────────────────────────────────────────────
 
 function PillStep({
   def,
@@ -196,7 +196,7 @@ function PillStep({
 }) {
   return (
     <>
-      {/* Near-invisible overlay — galaxy still clickable */}
+      {/* Near-invisible overlay - galaxy still clickable */}
       <div
         style={{
           position: "fixed", inset: 0, zIndex: 71,
@@ -205,7 +205,7 @@ function PillStep({
         }}
       />
 
-      {/* Floating pill — top-center */}
+      {/* Floating pill - top-center */}
       <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)", width: "min(400px, calc(100vw - 2rem))" }}>
         <motion.div
           initial={{ opacity: 0, y: -18, scale: 0.94 }}
@@ -254,7 +254,7 @@ function PillStep({
             </h2>
           </div>
 
-          {/* Sub — split by newline so we can style separately */}
+          {/* Sub - split by newline so we can style separately */}
           {def.sub.split("\n").map((line, i) => (
             <p key={i} style={{
               ...SERIF,
@@ -314,7 +314,7 @@ function PillStep({
   );
 }
 
-// ── Top card (steps 2 & 3 — search bar interactions) ──────────────────────
+// ── Top card (steps 2 & 3 - search bar interactions) ──────────────────────
 
 function TopStep({
   def,
@@ -336,7 +336,7 @@ function TopStep({
         }}
       />
 
-      {/* Card — top of screen */}
+      {/* Card - top of screen */}
       <div style={{ position: "fixed", top: "1.25rem", left: "50%", zIndex: 72, transform: "translateX(-50%)", width: "min(420px, calc(100vw - 2rem))" }}>
         <motion.div
           key={def.eyebrow}
@@ -364,7 +364,7 @@ function TopStep({
             {def.title}
           </h2>
 
-          {/* Body — split by \n so each line is separate */}
+          {/* Body - split by \n so each line is separate */}
           <div style={{ marginBottom: "0.875rem" }}>
             {def.body.split("\n").map((line, i) => (
               line.trim() ? (
