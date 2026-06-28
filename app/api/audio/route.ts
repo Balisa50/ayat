@@ -9,7 +9,7 @@ export const maxDuration = 30;
  *
  * Stream-proxy for recitation audio files. Exists so the browser's
  * MediaElementAudioSourceNode can capture the audio stream cleanly for
- * video recording — remote CDNs occasionally return CORS headers that
+ * video recording - remote CDNs occasionally return CORS headers that
  * taint the audio context and silence the recorded track.
  *
  * Only a tight allow-list of hosts is proxied.
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     return new Response("bad url", { status: 400 });
   }
 
-  // Enforce HTTPS — no plain-HTTP audio proxying
+  // Enforce HTTPS - no plain-HTTP audio proxying
   if (target.protocol !== "https:") {
     return new Response("https required", { status: 400 });
   }
