@@ -30,7 +30,7 @@ async function loadVerses(): Promise<Verse[]> {
  * /api/card?s=<surah>&a=<ayah>
  *
  * Returns a 1080x1350 PNG. Portrait aspect, Instagram-story friendly,
- * typographic and dark — it's meant to look like the verse card itself,
+ * typographic and dark - it's meant to look like the verse card itself,
  * not a marketing banner.
  */
 export async function GET(req: NextRequest) {
