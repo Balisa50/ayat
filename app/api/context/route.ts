@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
+import { nvidiaChat } from "@/lib/nvidia";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -110,8 +111,7 @@ export async function POST(req: NextRequest) {
  return NextResponse.json({ context: null }, { status: 400 });
  }
 
- const key = process.env.ANTHROPIC_API_KEY;
- if (!key) {
+ if (!process.env.NVIDIA_API_KEY) {
  return NextResponse.json({ context: null }, { status: 503 });
  }
 
@@ -123,35 +123,19 @@ Translation: ${translation}
 
 Write the five sections. Plain text only, no asterisks, no markdown.`;
 
- const res = await fetch("https://api.anthropic.com/v1/messages", {
- method: "POST",
- headers: {
- "x-api-key": key,
- "anthropic-version": "2023-06-01",
- "content-type": "application/json",
- },
- body: JSON.stringify({
- model: "claude-sonnet-4-5",
- max_tokens: 700,
+ let raw = "";
+ try {
+ raw = await nvidiaChat({
  system: SYSTEM,
  messages: [{ role: "user", content: userContent }],
- }),
+ maxTokens: 700,
  });
-
- if (!res.ok) {
- const body = await res.text().catch(() => "");
- const paused = /credit balance|credit_balance|invalid_request_error.*credit|authentication_error|invalid x-api-key/i.test(body);
+ } catch {
  return NextResponse.json(
- { context: null, paused, error: paused ? "AI commentary is paused - between API top-ups." : "AI temporarily unreachable." },
- { status: paused ? 503 : 502 },
+ { context: null, error: "AI temporarily unreachable." },
+ { status: 502 },
  );
  }
-
- const data = await res.json();
- const raw =
- Array.isArray(data.content) && data.content[0]?.type === "text"
- ? (data.content[0].text as string)
- : "";
 
  return NextResponse.json({ context: stripMarkdown(raw) });
  } catch {

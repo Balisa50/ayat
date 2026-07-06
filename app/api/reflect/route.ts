@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
+import { nvidiaChat } from "@/lib/nvidia";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -143,7 +144,6 @@ function extractJsonArray(raw: string): unknown {
 type ExcludeRef = { surah: number; ayah: number };
 
 async function askClaude(
- key: string,
  query: string,
  candidates: RawVerse[],
  retryHint: string | null,
@@ -168,35 +168,17 @@ async function askClaude(
  ? `${query}${candidateBlock}${excludeBlock}\n\n(Previous attempt returned references that did not match a real verse, be more careful with numbering. ${retryHint})`
  : `${query}${candidateBlock}${excludeBlock}`;
 
- const res = await fetch("https://api.anthropic.com/v1/messages", {
- method: "POST",
- headers: {
- "x-api-key": key,
- "anthropic-version": "2023-06-01",
- "content-type": "application/json",
- },
- body: JSON.stringify({
- model: "claude-sonnet-4-5",
- max_tokens: 800,
- temperature: 0.4,
+ let raw = "";
+ try {
+ raw = await nvidiaChat({
  system: SYSTEM,
  messages: [{ role: "user", content: userContent }],
- }),
+ maxTokens: 800,
+ temperature: 0.4,
  });
-
- if (!res.ok) {
- const text = await res.text().catch(() => "");
- if (/credit balance|credit_balance|invalid_request_error.*credit|authentication_error|invalid x-api-key/i.test(text)) {
- throw new Error("__AI_PAUSED__");
- }
+ } catch {
  return null;
  }
-
- const data = await res.json();
- const raw =
- Array.isArray(data.content) && data.content[0]?.type === "text"
- ? (data.content[0].text as string)
- : "";
  const parsed = extractJsonArray(raw);
  if (!Array.isArray(parsed)) return null;
 
@@ -279,8 +261,7 @@ export async function POST(req: NextRequest) {
  return NextResponse.json({ error: "Keep it under 500 characters." }, { status: 400 });
  }
 
- const key = process.env.ANTHROPIC_API_KEY;
- if (!key) {
+ if (!process.env.NVIDIA_API_KEY) {
  return NextResponse.json({ error: "Service temporarily unavailable." }, { status: 503 });
  }
 
@@ -300,7 +281,7 @@ export async function POST(req: NextRequest) {
  const candidates = findCandidates(verses, query.trim(), 15);
 
  // First pass
- let matches = await askClaude(key, query.trim(), candidates, null, exclude);
+ let matches = await askClaude(query.trim(), candidates, null, exclude);
  let validated = matches ? await validate(matches, verses) : [];
 
  // Retry once if nothing survived validation
@@ -311,7 +292,7 @@ export async function POST(req: NextRequest) {
  const hint = invalid
  ? `Avoid these invalid refs: ${invalid}.`
  : "Double-check your numbering against the candidate list.";
- matches = await askClaude(key, query.trim(), candidates, hint, exclude);
+ matches = await askClaude(query.trim(), candidates, hint, exclude);
  validated = matches ? await validate(matches, verses) : [];
  }
 
