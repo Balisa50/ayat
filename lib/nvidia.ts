@@ -41,9 +41,14 @@ export async function nvidiaChat(opts: CallOpts): Promise<string> {
     ? [{ role: "system", content: opts.system }, ...opts.messages]
     : opts.messages;
 
+  // Bound each call so a slow/hanging model aborts and falls to the next one
+  // instead of eating the whole function budget.
+  const timeoutMs = 22000;
   let lastErr = "";
   for (const model of NVIDIA_MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       let res: Response;
       try {
         res = await fetch(`${NVIDIA_BASE}/chat/completions`, {
@@ -58,9 +63,12 @@ export async function nvidiaChat(opts: CallOpts): Promise<string> {
             max_tokens: opts.maxTokens ?? 1024,
             temperature: opts.temperature ?? 0.7,
           }),
+          signal: controller.signal,
         });
+        clearTimeout(timer);
       } catch (e) {
-        lastErr = `network: ${e instanceof Error ? e.message : String(e)}`;
+        clearTimeout(timer);
+        lastErr = `network/timeout: ${e instanceof Error ? e.message : String(e)}`;
         if (attempt === 0) { await sleep(400); continue; }
         break;
       }

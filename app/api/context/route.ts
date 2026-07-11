@@ -3,7 +3,7 @@ import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
 import { nvidiaChat } from "@/lib/nvidia";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 /**
