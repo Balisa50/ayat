@@ -13,7 +13,7 @@ export const NVIDIA_MODEL =
 // NVIDIA fallbacks. A model deprecation becomes a 1-line env fix, not an outage.
 const NVIDIA_MODELS: string[] = [
   NVIDIA_MODEL,
-  "deepseek-ai/deepseek-v4-flash",
+  "deepseek-ai/deepseek-v4-pro",
 ].filter((m, i, a) => m && a.indexOf(m) === i);
 
 export type ChatMessage = { role: string; content: string };
