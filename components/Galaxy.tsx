@@ -154,7 +154,12 @@ function ParticleField({
  positions[i * 3 + 1] = y + j(2);
  positions[i * 3 + 2] = z + j(3);
 
- const t = (Math.abs(Math.sin((v.cluster + 1) * 1.13)) + 1) * 0.5;
+ // Decorative shade variation only. Keyed to the verse id rather than
+ // v.cluster: cluster is a semantic field, so keying colour to it meant any
+ // legitimate re-clustering silently restyled the whole galaxy. Same [0.5, 1]
+ // band as before, so the palette is unchanged.
+ const h = Math.sin((v.id + 4) * 12.9898) * 43758.5453;
+ const t = 0.5 + (h - Math.floor(h)) * 0.5;
  const c =
  v.revelationType === "Meccan"
  ? MECCAN_COLOR.clone().lerp(MECCAN_COLOR_2, t)
