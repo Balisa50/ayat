@@ -8,6 +8,7 @@ import { SearchBar, type DetectiveMatch } from "@/components/SearchBar";
 import { VerseCard } from "@/components/VerseCard";
 import { TourOverlay, TOUR_KEY, TOUR_STEPS } from "@/components/TourOverlay";
 import { matchVerses } from "@/lib/search";
+import { useSemanticSearch } from "@/lib/use-semantic-search";
 import { pickDailyVerse, todayKey } from "@/lib/daily";
 import { useReminders } from "@/components/Reminders";
 import type { Verse } from "@/lib/types";
@@ -120,10 +121,23 @@ export default function Home() {
  .catch(() => { /* fail silently, loading indicator handles this */ });
  }, []);
 
- const matched = useMemo(() => {
+ // Literal + synonym search. Instant, unchanged, and always the first paint.
+ const literalMatched = useMemo(() => {
  if (!verses || !query) return new Set<number>();
  return matchVerses(verses, query);
  }, [verses, query]);
+
+ // True semantic search, resolving a moment later. See lib/semantic.ts.
+ const { semantic } = useSemanticSearch(verses, query);
+
+ // Union, never replace. A query can only gain verses this way, so if the
+ // model or the vectors fail to load, v1 behaves exactly as it always has.
+ const matched = useMemo(() => {
+ if (!semantic || semantic.ids.length === 0) return literalMatched;
+ const out = new Set(literalMatched);
+ for (const id of semantic.ids) out.add(id);
+ return out;
+ }, [literalMatched, semantic]);
 
  useEffect(() => {
  if (!query || themeTriggeredRef.current || matched.size === 0) return;
