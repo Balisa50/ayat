@@ -154,12 +154,25 @@ async function loadExtractor(): Promise<Extractor | null> {
 
   extractorPromise = (async () => {
     try {
+      setLoadState({ phase: "loading", progress: 0 });
       const { pipeline } = await import("@huggingface/transformers");
-      const pipe = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+      const pipe = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+        // Real download progress rather than a spinner that says nothing.
+        // The weights are ~23 MB and fire per-file events; report the largest
+        // file's progress, which in practice is the model itself and tracks
+        // the wait the reader actually feels.
+        progress_callback: (p: { status?: string; progress?: number }) => {
+          if (p?.status === "progress" && typeof p.progress === "number") {
+            setLoadState({ phase: "loading", progress: Math.max(loadState.progress, p.progress / 100) });
+          }
+        },
+      } as never);
       extractor = pipe as unknown as Extractor;
+      setLoadState({ phase: "ready", progress: 1 });
       return extractor;
     } catch (err) {
       console.warn("[semantic] query encoder unavailable:", err);
+      setLoadState({ phase: "failed", progress: 0 });
       extractorPromise = null;
       return null;
     }
@@ -169,6 +182,39 @@ async function loadExtractor(): Promise<Extractor | null> {
 }
 
 export { loadMatrix as loadVerseMatrix };
+
+// ─────────────────────────── load progress ───────────────────────────
+
+/**
+ * First search pays for a ~23 MB model download, which on a slow connection
+ * is 10-30 seconds of nothing happening. Without a signal the app looks
+ * frozen and people tap again, so the load is reported rather than hidden.
+ * Every later search is instant and reports nothing.
+ */
+export type LoadPhase = "idle" | "loading" | "ready" | "failed";
+export interface LoadState {
+  phase: LoadPhase;
+  /** 0..1, best-effort. Falls back to an indeterminate bar when unknown. */
+  progress: number;
+}
+
+let loadState: LoadState = { phase: "idle", progress: 0 };
+const loadListeners = new Set<(s: LoadState) => void>();
+
+function setLoadState(next: LoadState) {
+  loadState = next;
+  for (const fn of loadListeners) fn(next);
+}
+
+export function getLoadState(): LoadState {
+  return loadState;
+}
+
+/** Subscribe to load progress. Returns an unsubscribe. */
+export function onLoadStateChange(fn: (s: LoadState) => void): () => void {
+  loadListeners.add(fn);
+  return () => loadListeners.delete(fn);
+}
 
 /** Kick off both downloads without blocking. Safe to call repeatedly. */
 export function warmUp(): void {

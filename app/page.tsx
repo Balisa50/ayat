@@ -9,6 +9,7 @@ import { VerseCard } from "@/components/VerseCard";
 import { TourOverlay, TOUR_KEY, TOUR_STEPS } from "@/components/TourOverlay";
 import { matchVerses } from "@/lib/search";
 import { useSemanticSearch } from "@/lib/use-semantic-search";
+import { SearchStatus } from "@/components/SearchStatus";
 import { pickDailyVerse, todayKey } from "@/lib/daily";
 import { useReminders } from "@/components/Reminders";
 import type { Verse } from "@/lib/types";
@@ -265,6 +266,9 @@ export default function Home() {
  every time a card opens, which is why typing in Ask mode would
  evaporate the moment a card was tapped.
  */}
+ {/* First-search model download. Renders nothing once cached. */}
+ <SearchStatus active={!!query && !selected} />
+
  {entryDone && verses && (
  <SearchBar
  onSearch={(q) => { setQuery(q); if (q) clearPulse(); }}
