@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 import umap
 from sklearn.cluster import HDBSCAN
+from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 
 HERE = Path(__file__).parent
@@ -100,6 +101,45 @@ def main() -> None:
         f"Found {n_clusters} clusters "
         f"({n_noise} noise points, {100 * n_noise / len(verses):.1f}%)"
     )
+
+    # A low noise share is not a quality result, and reporting it alone was
+    # misleading. Noise only says how many points HDBSCAN was willing to place;
+    # it says nothing about whether the clusters separate anything. Clustering
+    # in a UMAP space makes low noise easy to obtain, because UMAP pulls points
+    # into locally dense neighbourhoods whether or not real structure exists.
+    #
+    # Silhouette is measured in `reduced` (the PCA space the app also uses for
+    # neighbour search), not in the UMAP space the labels came from, so it is an
+    # independent check rather than a restatement of the objective HDBSCAN just
+    # optimised.
+    assigned = clusters != -1
+    silhouette = float("nan")
+    if n_clusters >= 2 and assigned.sum() > n_clusters:
+        silhouette = float(
+            silhouette_score(reduced[assigned], clusters[assigned])
+        )
+    largest = 0.0
+    if n_clusters >= 1 and assigned.any():
+        counts = np.bincount(clusters[assigned])
+        largest = float(counts.max() / len(clusters))
+    print(f"  silhouette (PCA space): {silhouette:.3f}")
+    print(f"  largest cluster holds {largest:.1%} of the corpus")
+
+    # Two blobs covering the corpus is the failure this pipeline fell into once
+    # already, in the other direction. Worth saying out loud rather than
+    # leaving to whoever reads the JSON.
+    if n_clusters <= 2 or largest > 0.5:
+        print(
+            "  WARNING: this is a coarse split, not topic structure. Verify what "
+            "separates the clusters (verse length and revelation type are the "
+            "usual culprits) before describing them as themes."
+        )
+    if silhouette == silhouette and silhouette < 0.15:
+        print(
+            f"  WARNING: silhouette {silhouette:.3f} means the clusters barely "
+            "separate in the search space. Low noise here reflects assignment, "
+            "not structure."
+        )
 
     for i, v in enumerate(verses):
         v["x"] = float(coords3[i, 0])
