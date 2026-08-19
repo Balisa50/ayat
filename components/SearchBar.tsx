@@ -418,17 +418,43 @@ export function SearchBar({
  </span>
  </button>
  )}
- {micSupported && (
+ {/* The mic is always rendered. It used to be hidden whenever the Web
+ Speech API was missing, which made the feature look absent rather than
+ unavailable, and Firefox still has not shipped that API. Now it stays
+ visible and says why it cannot run. */}
  <button
  type="button"
- onClick={listening ? stopListening : startListening}
- className={`p-1 transition-colors shrink-0 ${listening ? "text-[#ffd700]" : "text-white/40 hover:text-white/80"}`}
- aria-label={listening ? "Stop listening" : "Start voice input"}
- title={listening ? "Listening · tap to stop" : "Voice input"}
+ onClick={
+ !micSupported
+ ? () => showAskError("Voice input needs Chrome, Edge or Safari. Firefox has not shipped speech recognition yet.")
+ : listening
+ ? stopListening
+ : startListening
+ }
+ className={`p-1 transition-colors shrink-0 ${
+ listening
+ ? "text-[#ffd700]"
+ : micSupported
+ ? "text-white/40 hover:text-white/80"
+ : "text-white/20 hover:text-white/40"
+ }`}
+ aria-label={
+ !micSupported
+ ? "Voice input, not supported in this browser"
+ : listening
+ ? "Stop listening"
+ : "Start voice input"
+ }
+ title={
+ !micSupported
+ ? "Voice input needs Chrome, Edge or Safari"
+ : listening
+ ? "Listening · tap to stop"
+ : "Voice input"
+ }
  >
  {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
  </button>
- )}
  {(feeling || interim) && (
  <button
  type="button"

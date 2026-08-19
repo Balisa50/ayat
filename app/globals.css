@@ -71,3 +71,23 @@ body {
 html[data-card-open="1"] [class*="fixed bottom-"] {
  display: none !important;
 }
+
+/* ---------- scrollbars ---------- */
+
+/* Nothing draws a scrollbar. Everything still scrolls: wheel, trackpad,
+   keyboard and touch are untouched, only the bar itself is hidden. This
+   matters most on the verse card, which scrolls inside a fixed height. */
+html {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*,
+*::before,
+*::after {
+  scrollbar-width: none;
+}
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}

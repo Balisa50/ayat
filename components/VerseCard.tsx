@@ -629,7 +629,7 @@ export function VerseCard({
  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
  ref={bodyRef}
  onScroll={onBodyScroll}
- className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl p-6 md:p-10 shadow-2xl max-h-[88vh] overflow-y-auto pointer-events-auto"
+ className="relative w-full max-w-2xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl p-6 md:p-10 lg:p-12 shadow-2xl max-h-[88vh] overflow-y-auto pointer-events-auto"
  >
  <button
  onClick={onClose}

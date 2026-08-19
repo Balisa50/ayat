@@ -52,16 +52,27 @@ export async function GET(req: NextRequest) {
     return new Response("host not allowed", { status: 403 });
   }
 
+  // Forward the browser's Range header. A media element asks for byte ranges
+  // to work out duration and to seek, and it expects a 206 back. This proxy
+  // used to swallow the header and answer every request with the whole file
+  // and a bare 200, with no Accept-Ranges and no Content-Length. Chrome
+  // tolerates that; Firefox does not, and playback simply never started.
+  const range = req.headers.get("range");
+
   let upstream: Response;
   try {
     upstream = await fetch(target.toString(), {
-      headers: { "User-Agent": "AYAT/1.0 (+https://ayat.app)" },
+      headers: {
+        "User-Agent": "AYAT/1.0 (+https://ayat-ab.vercel.app)",
+        ...(range ? { Range: range } : {}),
+      },
     });
   } catch {
     return new Response("upstream unreachable", { status: 502 });
   }
 
-  if (!upstream.ok || !upstream.body) {
+  // 206 is the expected answer to a range request, so it is a success too.
+  if ((!upstream.ok && upstream.status !== 206) || !upstream.body) {
     return new Response("upstream error", { status: 502 });
   }
 
@@ -71,11 +82,24 @@ export async function GET(req: NextRequest) {
     return new Response("upstream returned non-audio content", { status: 502 });
   }
 
+  const headers = new Headers({
+    "Content-Type": upstreamCT ?? "audio/mpeg",
+    "Cache-Control": "public, max-age=604800, immutable",
+    "Access-Control-Allow-Origin": "*",
+    // Advertise range support even when this particular response is whole,
+    // otherwise the player never tries to seek.
+    "Accept-Ranges": "bytes",
+  });
+
+  // Pass the length and the range window straight through when the upstream
+  // gave them, so the player can show a real duration and scrub.
+  const len = upstream.headers.get("Content-Length");
+  if (len) headers.set("Content-Length", len);
+  const contentRange = upstream.headers.get("Content-Range");
+  if (contentRange) headers.set("Content-Range", contentRange);
+
   return new Response(upstream.body, {
-    headers: {
-      "Content-Type": upstreamCT ?? "audio/mpeg",
-      "Cache-Control": "public, max-age=604800, immutable",
-      "Access-Control-Allow-Origin": "*",
-    },
+    status: upstream.status === 206 ? 206 : 200,
+    headers,
   });
 }

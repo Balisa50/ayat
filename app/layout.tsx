@@ -10,7 +10,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://ayat.app"),
+  metadataBase: new URL("https://ayat-ab.vercel.app"),
   title: "AYAT · The Quran, visualised",
   description:
     "6,236 verses of the Quran rendered as a living star field. Explore by theme, feeling, or a verse you half-remember.",
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     description:
       "6,236 verses rendered as a living galaxy. Semantic themes self-organise into constellations.",
     type: "website",
-    url: "https://ayat.app",
+    url: "https://ayat-ab.vercel.app",
     siteName: "AYAT",
   },
   twitter: {
