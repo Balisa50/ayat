@@ -44,11 +44,6 @@ body {
  #020308;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
-
 @keyframes fade-slow {
  from { opacity: 0; }
  to { opacity: 1; }

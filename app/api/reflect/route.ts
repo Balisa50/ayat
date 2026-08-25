@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
-import { nvidiaChat } from "@/lib/nvidia";
+import { chat, AiUnavailableError, availableProviders, AI_UNAVAILABLE_MESSAGE } from "@/lib/ai-pipeline";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -169,16 +169,27 @@ async function askClaude(
  : `${query}${candidateBlock}${excludeBlock}`;
 
  let raw = "";
- try {
- raw = await nvidiaChat({
- system: SYSTEM,
- messages: [{ role: "user", content: userContent }],
- maxTokens: 800,
- temperature: 0.4,
- });
- } catch {
- return null;
- }
+  try {
+    // This route can make two sequential calls (first pass, then a retry with
+    // a hint), so each walk gets half the budget rather than all of it.
+    const result = await chat({
+      system: SYSTEM,
+      messages: [{ role: "user", content: userContent }],
+      maxTokens: 800,
+      temperature: 0.4,
+      deadlineMs: 22_000,
+    });
+    raw = result.text;
+    if (result.fellBackFrom.length > 0) {
+      console.warn(`[reflect] answered by ${result.provider}/${result.model} after ${result.fellBackFrom.join(", ")} failed`);
+    }
+  } catch (err) {
+    // A total outage is not the same as "no verse matched", and returning
+    // null here made the route tell the user there were no results when the
+    // truth was that nothing had been asked. Let it reach the handler.
+    if (err instanceof AiUnavailableError) throw err;
+    return null;
+  }
  const parsed = extractJsonArray(raw);
  if (!Array.isArray(parsed)) return null;
 
@@ -261,9 +272,9 @@ export async function POST(req: NextRequest) {
  return NextResponse.json({ error: "Keep it under 500 characters." }, { status: 400 });
  }
 
- if (!process.env.NVIDIA_API_KEY) {
- return NextResponse.json({ error: "Service temporarily unavailable." }, { status: 503 });
- }
+ if (availableProviders().length === 0) {
+      return NextResponse.json({ error: AI_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
 
  // Parse exclude list: array of {surah, ayah} sent by client to skip already-seen verses
  const excludeRaw: unknown[] = Array.isArray(body?.exclude) ? body.exclude : [];
@@ -308,7 +319,13 @@ export async function POST(req: NextRequest) {
 
  return NextResponse.json({ matches: validated });
  } catch (err) {
- if (err instanceof Error && err.message === "__AI_PAUSED__") {
+ if (err instanceof AiUnavailableError) {
+      return NextResponse.json(
+        { matches: [], unavailable: true, error: err.message },
+        { status: 503 },
+      );
+    }
+    if (err instanceof Error && err.message === "__AI_PAUSED__") {
  return NextResponse.json(
  { matches: [], paused: true, error: "AI commentary is paused - between API top-ups." },
  { status: 503 },

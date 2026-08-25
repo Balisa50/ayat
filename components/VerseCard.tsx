@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePersistedState } from "@/lib/use-persisted-state";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Volume2, ArrowRight, Sparkles, StopCircle, Repeat } from "lucide-react";
@@ -144,6 +145,16 @@ export function VerseCard({
 
  // Text visibility, only the text content div fades; card shell is static
  const [textVisible, setTextVisible] = useState(true);
+
+ // Reading density. Compact fits more of a long verse on a phone; comfortable
+ // is the original spacing. Persisted because it is a preference about
+ // eyesight and screen size, not about this particular verse.
+ const [density, setDensity] = usePersistedState<"compact" | "comfortable">(
+   "ayat:density",
+   "comfortable",
+   ["compact", "comfortable"] as const,
+ );
+ const compact = density === "compact";
 
  // ── Pre-fetch refs, all written/read inside the RAF + onended callback ──
  // These are NEVER setState, that prevents the fetch effect from re-firing
@@ -629,15 +640,27 @@ export function VerseCard({
  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
  ref={bodyRef}
  onScroll={onBodyScroll}
- className="relative w-full max-w-2xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl p-6 md:p-10 lg:p-12 shadow-2xl max-h-[88vh] overflow-y-auto pointer-events-auto"
+ className={`relative w-full max-w-2xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl shadow-2xl min-h-[120px] max-h-[88vh] overflow-y-auto pointer-events-auto ${
+   compact ? "p-6 md:p-6 lg:p-7" : "p-6 md:p-10 lg:p-12"
+ }`}
  >
+ <div className="absolute right-4 top-4 flex items-center gap-1">
+ <button
+ onClick={() => setDensity(compact ? "comfortable" : "compact")}
+ className="rounded-full px-2.5 py-1.5 font-serif-fine text-[10px] uppercase tracking-[0.18em] text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+ aria-pressed={compact}
+ title={compact ? "Switch to comfortable spacing" : "Switch to compact spacing"}
+ >
+ {compact ? "Expand" : "Compact"}
+ </button>
  <button
  onClick={onClose}
- className="absolute right-4 top-4 rounded-full p-2 text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+ className="rounded-full p-2 text-white/50 hover:text-white hover:bg-white/10 transition-colors"
  aria-label="Close"
  >
  <X className="h-4 w-4" />
  </button>
+ </div>
 
  {isDaily && (
  <div className="mb-5 flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 w-fit">

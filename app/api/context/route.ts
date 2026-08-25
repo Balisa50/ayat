@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
-import { nvidiaChat } from "@/lib/nvidia";
+import { chat, AiUnavailableError, availableProviders, AI_UNAVAILABLE_MESSAGE } from "@/lib/ai-pipeline";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -111,9 +111,9 @@ export async function POST(req: NextRequest) {
  return NextResponse.json({ context: null }, { status: 400 });
  }
 
- if (!process.env.NVIDIA_API_KEY) {
- return NextResponse.json({ context: null }, { status: 503 });
- }
+ if (availableProviders().length === 0) {
+      return NextResponse.json({ context: null, error: AI_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
 
  const userContent = `Surah ${surahName} (${surah}), Verse ${ayah}
 
@@ -124,18 +124,25 @@ Translation: ${translation}
 Write the five sections. Plain text only, no asterisks, no markdown.`;
 
  let raw = "";
- try {
- raw = await nvidiaChat({
- system: SYSTEM,
- messages: [{ role: "user", content: userContent }],
- maxTokens: 700,
- });
- } catch {
- return NextResponse.json(
- { context: null, error: "AI temporarily unreachable." },
- { status: 502 },
- );
- }
+    try {
+      // maxDuration is 60s and this route makes one model call, so the walk
+      // gets 45s of that and leaves room to serialise the response.
+      const result = await chat({
+        system: SYSTEM,
+        messages: [{ role: "user", content: userContent }],
+        maxTokens: 700,
+        deadlineMs: 45_000,
+      });
+      raw = result.text;
+      if (result.fellBackFrom.length > 0) {
+        console.warn(`[context] answered by ${result.provider}/${result.model} after ${result.fellBackFrom.join(", ")} failed`);
+      }
+    } catch (err) {
+      // Every provider is down. Say so in a sentence, and keep the reason in
+      // the log where the pipeline already wrote it.
+      const message = err instanceof AiUnavailableError ? err.message : AI_UNAVAILABLE_MESSAGE;
+      return NextResponse.json({ context: null, error: message }, { status: 503 });
+    }
 
  return NextResponse.json({ context: stripMarkdown(raw) });
  } catch {

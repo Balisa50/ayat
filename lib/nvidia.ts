@@ -1,22 +1,22 @@
-// NVIDIA NIM client (OpenAI-compatible). AYAT moved its grounded-tafsir and
-// verse-detective calls off the paid Anthropic API onto NVIDIA's free endpoint.
-// Leads with NVIDIA_MODEL and falls back down a chain of free models (retrying
-// transient errors) so a flaky response or a model deprecation degrades
-// gracefully instead of failing the request.
-// Set NVIDIA_API_KEY in the environment; NVIDIA_MODEL is optional.
+/**
+ * Kept as a thin shim over lib/ai-pipeline.ts.
+ *
+ * This file used to hold the whole client: one host, one key, a chain of models
+ * behind it, and a retry. The model chain was real, and it was not a fallback,
+ * because every model in it failed together whenever the key or the host was
+ * the problem. That logic now lives in the pipeline, which walks providers
+ * first and models second.
+ *
+ * The export stays so existing call sites keep working. New code should call
+ * `chat` or `chatText` from lib/ai-pipeline directly, because those report
+ * which provider answered, which is the thing worth logging.
+ */
+import { chatText, type ChatMessage as PipelineMessage } from "./ai-pipeline";
 
-const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1";
-export const NVIDIA_MODEL =
-  process.env.NVIDIA_MODEL || "mistralai/mistral-medium-3.5-128b";
+export type ChatMessage = PipelineMessage;
 
-// Model chain, tried in order. Primary is env-overridable; the rest are free
-// NVIDIA fallbacks. A model deprecation becomes a 1-line env fix, not an outage.
-const NVIDIA_MODELS: string[] = [
-  NVIDIA_MODEL,
-  "deepseek-ai/deepseek-v4-pro",
-].filter((m, i, a) => m && a.indexOf(m) === i);
-
-export type ChatMessage = { role: string; content: string };
+/** Still exported: read in a couple of places for display. */
+export const NVIDIA_MODEL = process.env.NVIDIA_MODEL || "mistralai/mistral-medium-3.5-128b";
 
 interface CallOpts {
   system?: string;
@@ -25,64 +25,7 @@ interface CallOpts {
   temperature?: number;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const isTransient = (status: number) => status === 429 || status >= 500;
-
-/**
- * One-shot completion with model fallback + per-model retry. Walks NVIDIA_MODELS,
- * retrying a transient failure on the same model once before dropping to the
- * next. Only throws once every model is exhausted.
- */
+/** @deprecated Use `chat` from lib/ai-pipeline, which reports the provider that answered. */
 export async function nvidiaChat(opts: CallOpts): Promise<string> {
-  const key = process.env.NVIDIA_API_KEY;
-  if (!key) throw new Error("NVIDIA_API_KEY is not set");
-
-  const messages = opts.system
-    ? [{ role: "system", content: opts.system }, ...opts.messages]
-    : opts.messages;
-
-  // Bound each call so a slow/hanging model aborts and falls to the next one
-  // instead of eating the whole function budget.
-  const timeoutMs = 22000;
-  let lastErr = "";
-  for (const model of NVIDIA_MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      let res: Response;
-      try {
-        res = await fetch(`${NVIDIA_BASE}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${key}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            max_tokens: opts.maxTokens ?? 1024,
-            temperature: opts.temperature ?? 0.7,
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-      } catch (e) {
-        clearTimeout(timer);
-        lastErr = `network/timeout: ${e instanceof Error ? e.message : String(e)}`;
-        if (attempt === 0) { await sleep(400); continue; }
-        break;
-      }
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content ?? "";
-        if (text) return text;
-        lastErr = `empty response from ${model}`;
-        break; // empty → next model
-      }
-      lastErr = `NVIDIA API ${res.status} (${model}): ${(await res.text().catch(() => "")).slice(0, 200)}`;
-      if (isTransient(res.status) && attempt === 0) { await sleep(500); continue; }
-      break; // non-transient or retried → next model
-    }
-  }
-  throw new Error(`NVIDIA API error after all models: ${lastErr}`);
+  return chatText(opts);
 }
