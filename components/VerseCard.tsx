@@ -640,8 +640,8 @@ export function VerseCard({
  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
  ref={bodyRef}
  onScroll={onBodyScroll}
- className={`relative w-full max-w-2xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl shadow-2xl min-h-[120px] max-h-[88vh] overflow-y-auto pointer-events-auto ${
-   compact ? "p-6 md:p-6 lg:p-7" : "p-6 md:p-10 lg:p-12"
+ className={`relative w-full max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl shadow-2xl min-h-[120px] max-h-[90vh] overflow-y-auto pointer-events-auto ${
+   compact ? "p-6 md:p-6 lg:p-7" : "p-6 md:p-10 lg:p-14"
  }`}
  >
  <div className="absolute right-4 top-4 flex items-center gap-1">
