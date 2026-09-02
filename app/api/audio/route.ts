@@ -4,6 +4,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
+// Deliberately well under maxDuration. A ceiling equal to the function budget
+// is not a timeout, it is the platform killing the request with no chance to
+// return a useful status.
+const UPSTREAM_TIMEOUT_MS = 10_000;
+
 /**
  * /api/audio?u=<encoded-url>
  *
@@ -59,6 +64,16 @@ export async function GET(req: NextRequest) {
   // tolerates that; Firefox does not, and playback simply never started.
   const range = req.headers.get("range");
 
+  // Bound the wait on the upstream CDN. Without this the fetch inherits no
+  // deadline at all: a CDN that accepts the connection and then stalls holds
+  // this function open until the platform kills it at maxDuration, and the
+  // listener gets a spinner for the full thirty seconds before anything says
+  // so. Ten seconds is well beyond a healthy response for an audio file and
+  // still short enough that a failure is legible as a failure.
+  //
+  // The timeout covers the response headers only, not the body stream. Once
+  // upstream answers, the body is piped through and a large file is free to
+  // take as long as it needs.
   let upstream: Response;
   try {
     upstream = await fetch(target.toString(), {
@@ -66,9 +81,17 @@ export async function GET(req: NextRequest) {
         "User-Agent": "AYAT/1.0 (+https://ayat-ab.vercel.app)",
         ...(range ? { Range: range } : {}),
       },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
-  } catch {
-    return new Response("upstream unreachable", { status: 502 });
+  } catch (err) {
+    // A timeout aborts with a TimeoutError, which is worth distinguishing from
+    // a refused connection: one means the CDN is slow, the other that it is
+    // gone, and they call for different responses from an operator.
+    const timedOut = err instanceof Error && err.name === "TimeoutError";
+    return new Response(
+      timedOut ? "upstream timed out" : "upstream unreachable",
+      { status: timedOut ? 504 : 502 },
+    );
   }
 
   // 206 is the expected answer to a range request, so it is a success too.

@@ -3,6 +3,13 @@ import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// This route had no duration cap at all, so a stalled upstream ran to the
+// platform default before anything gave up.
+export const maxDuration = 15;
+
+// Comfortably inside maxDuration so a timeout returns a real status rather
+// than the platform terminating the function.
+const UPSTREAM_TIMEOUT_MS = 8_000;
 
 /**
  * /api/recitation?reciter=<id>&ayah=<surah>:<ayah>
@@ -96,7 +103,14 @@ export async function GET(req: NextRequest) {
 
   try {
     const url = `https://api.quran.com/api/v4/recitations/${reciter}/by_ayah/${ayah}`;
-    const res = await fetch(url, { next: { revalidate: 60 * 60 * 24 * 7 } });
+    // quran.com is a third party with no availability guarantee to this app.
+    // Without a deadline a stalled response holds the function open until the
+    // platform kills it, and the player waits on a lookup that is never coming
+    // back. Eight seconds is generous for a single metadata call.
+    const res = await fetch(url, {
+      next: { revalidate: 60 * 60 * 24 * 7 },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
     if (!res.ok) {
       return NextResponse.json(
         { error: `quran.com ${res.status}` },
@@ -127,7 +141,13 @@ export async function GET(req: NextRequest) {
       //           3-tuples [wordIndex, startMs, endMs]. Client handles both.
       segments: file.segments ?? [],
     });
-  } catch {
+  } catch (err) {
+    // A timeout is an upstream availability problem, not a bug here, and 504
+    // says so. Collapsing it into a 500 hides the difference from anyone
+    // reading logs later.
+    if (err instanceof Error && err.name === "TimeoutError") {
+      return NextResponse.json({ error: "quran.com timed out" }, { status: 504 });
+    }
     return NextResponse.json({ error: "upstream error" }, { status: 500 });
   }
 }

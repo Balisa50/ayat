@@ -168,6 +168,12 @@ export function SearchBar({
  method: "POST",
  headers: { "Content-Type": "application/json" },
  body: JSON.stringify({ query: trimmed, exclude: seen }),
+ // The route caps itself at maxDuration = 60, so the client waits a
+ // little longer. Bounding it below the server budget would abort
+ // requests that were still going to succeed and swap a real error
+ // message for a generic one. With no bound at all the spinner runs
+ // forever when the AI provider stalls and only a reload clears it.
+ signal: AbortSignal.timeout(65_000),
  });
  const d = await r.json();
  if (!r.ok) {
@@ -192,8 +198,15 @@ export function SearchBar({
  ]);
  onDetective(matches, trimmed);
  setInterim("");
- } catch {
- showAskError("Network hiccup. Try again.");
+ } catch (err) {
+ // A timeout earns its own message. "Network hiccup" invites an instant
+ // retry, which is the wrong move when the request already had over a
+ // minute and the provider is the slow part.
+ if (err instanceof Error && err.name === "TimeoutError") {
+   showAskError("AI search took too long to answer. Try again in a moment.");
+ } else {
+   showAskError("Network hiccup. Try again.");
+ }
  } finally {
  setAsking(false);
  }
