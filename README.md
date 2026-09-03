@@ -1,5 +1,8 @@
 # AYAT - the Quran as a galaxy
 
+[![CI](https://github.com/Balisa50/ayat/actions/workflows/ci.yml/badge.svg)](https://github.com/Balisa50/ayat/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+
 All 6,236 verses of the Quran rendered as a 3D particle galaxy. Verses
 self-organise by semantic theme using sentence-transformer embeddings → UMAP.
 Meccan surahs glow cool blue, Medinan amber. Search by meaning and matching

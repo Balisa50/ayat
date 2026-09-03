@@ -256,7 +256,6 @@ export function VerseCard({
  .catch(() => setContext(null))
  .finally(() => setLoadingContext(false));
  return () => ctrl.abort();
- // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [currentVerse, contextRequested, autoActive]);
 
  // ── Audio fetch for current verse ────────────────────────────────────────
@@ -295,7 +294,6 @@ export function VerseCard({
  })
  .catch(() => {});
  return () => ctrl.abort();
- // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [currentVerse, reciterId]);
 
  // ── Pre-fetch next verse audio silently ──────────────────────────────────
@@ -479,7 +477,6 @@ export function VerseCard({
  a.onerror = () => setPlaying(false);
  audioRef.current = a;
  a.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
- // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [audioUrl]);
 
  // ── RAF: word highlighting + pre-fetch trigger at 80% ────────────────────
@@ -523,7 +520,6 @@ export function VerseCard({
  };
  rafRef.current = requestAnimationFrame(tick);
  return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
- // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [playing, segments]);
 
  // Cleanup audio when the top-level verse prop changes
