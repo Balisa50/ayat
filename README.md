@@ -48,7 +48,7 @@ Two things worth knowing if you touch this:
 - **It runs on the full 384-dim vectors, not the PCA-64 in `verses.json`.**
   PCA-64 ranks fine but destroys *absolute* similarity calibration: measured
   over 20 off-topic and 14 on-topic queries, the two sets separate with
-  AUC 1.000 in 384-dim and AUC 0.480 — no signal at all — in PCA-64. Absolute
+  AUC 1.000 in 384-dim against AUC 0.480, which is no signal at all, in PCA-64. Absolute
   scores are what let AYAT return *nothing* for "best pasta carbonara recipe"
   rather than a confident-looking list of near-random verses.
 
@@ -62,7 +62,7 @@ with HDBSCAN" sat in this README for months while being effectively untrue.
 
 It now clusters on a UMAP-reduced space, which is the standard fix, and noise
 is down to 1.2%. Be aware the honest result is still only **two clusters**, of
-roughly 4,000 and 2,200 — this corpus is semantically continuous rather than
+roughly 4,000 and 2,200. This corpus is semantically continuous rather than
 clumpy, so there is no rich thematic structure for density clustering to
 recover. The label is decorative; nothing in the UI depends on it.
 
@@ -77,8 +77,8 @@ python 03_reduce_and_cluster.py
 python 04_build_graph.py      # Writes verses.json, embeddings.i8, pca.bin
 ```
 
-`pca.bin` is the PCA basis. Nothing in v1 reads it — it belongs to the galaxy
-reprojection, which is v2-only — but the pipeline is shared, so it ships here
+`pca.bin` is the PCA basis. Nothing in v1 reads it, because it belongs to the galaxy
+reprojection, which is v2-only, but the pipeline is shared, so it ships here
 rather than leaving the repo out of step with its own build output.
 
 ## Running the frontend
