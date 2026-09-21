@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     try {
       const result = await chat({
         messages: [{ role: "user", content: "Reply with the single word: ok" }],
-        maxTokens: 5,
+        maxTokens: 512,
         timeoutMs: 15_000,
         deadlineMs: 25_000,
         attemptsPerModel: 1

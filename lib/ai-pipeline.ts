@@ -118,7 +118,6 @@ export function buildProviders(env: NodeJS.ProcessEnv = process.env): Provider[]
       models: dedupe([
         env.NVIDIA_MODEL || "openai/gpt-oss-20b",
         ...csv(env.NVIDIA_FALLBACK_MODELS),
-        "openai/gpt-oss-120b"
       ])
     },
     groq: {
