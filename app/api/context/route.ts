@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
 import { chat, AiUnavailableError, availableProviders, AI_UNAVAILABLE_MESSAGE } from "@/lib/ai-pipeline";
 
@@ -32,7 +32,7 @@ HITS: Explain only what classical Arabic linguists and scholars specifically not
 
 REFLECT: Write one question that emerges directly from the verse's documented meaning or its scholarly commentary. The question must be about the verse itself, its language, theology or historical context. Never write life-coaching prompts. Maximum fifteen words.
 
-NEXT: One related verse in the form "Surah:Ayah · short scholarly reason."
+NEXT: One related verse in the form "Surah:Ayah Â· short scholarly reason."
 
 Tone: You may be warm and occasionally carry gentle wit where appropriate, the great scholars were not dry robots. When a verse carries inherent irony or drama, let that breathe naturally. Iblis arguing the chemistry of fire versus clay when Allah commanded him to bow is not invented drama, it is what the verse itself records, and noting that he missed the point entirely by diving into elemental hierarchies is fair scholarly wit. That kind of humor must always emerge FROM the verse, never imposed onto it. Some verses are heavy (death, judgment, mercy), those stay serious and measured. Some verses carry inherent irony baked in, those can carry quiet scholarly humor. Read the verse first. Let the tone follow the verse. Never the other way around.
 
@@ -57,7 +57,7 @@ function stripMarkdown(s: string): string {
  .replace(/\*([^*]+)\*/g, "$1")
  .replace(/`([^`]+)`/g, "$1")
  .replace(/^#+\s*/gm, "")
- .replace(/^\s*[-•]\s+/gm, "")
+ .replace(/^\s*[-â€¢]\s+/gm, "")
  .replace(/\*/g, "")
  // Replace every Unicode dash variant the model might emit with a
  // comma plus space. Em-dashes and en-dashes look AI-generated;
@@ -85,7 +85,7 @@ function isValidRef(surah: unknown, ayah: unknown): boolean {
 }
 
 export async function POST(req: NextRequest) {
- // ── Rate limit: 40 req / 60 s per IP ──────────────────────────────────
+ // â”€â”€ Rate limit: 40 req / 60 s per IP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  const rl = checkRateLimit(getCallerId(req.headers), 40, 60_000);
  if (!rl.ok) {
  return NextResponse.json(
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
  const body = await req.json();
  const { arabic, translation, surahName, ayah, surah } = body ?? {};
 
- // ── Input validation ───────────────────────────────────────────────
+ // â”€â”€ Input validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  if (
  typeof arabic !== "string" || arabic.length > 2000 ||
  typeof translation !== "string" || translation.length > 2000 ||
@@ -130,7 +130,7 @@ Write the five sections. Plain text only, no asterisks, no markdown.`;
       const result = await chat({
         system: SYSTEM,
         messages: [{ role: "user", content: userContent }],
-        maxTokens: 700,
+        maxTokens: 2048,
         deadlineMs: 45_000,
       });
       raw = result.text;
