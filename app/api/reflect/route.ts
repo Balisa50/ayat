@@ -8,13 +8,25 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+/**
+ * Verse Detective, grounded in local dataset.
+ *
+ * Before asking the model, we run a lightweight text-match pass over all 6236
+ * verses to find the top candidates. Those candidates (with surah name,
+ * number, and translation snippet) are injected into the model prompt.
+ * This grounds the model's response in real verse data rather than relying on
+ * its memory alone. The model then picks the best match from the candidates, or
+ * returns a different verse if it is certain. Every returned reference is
+ * validated against the local dataset before we send it back.
+ */
+
 const SYSTEM = `You are a Quran verse detective. The user will describe a verse, a story, a historical context, a feeling, or anything they remember, sometimes vague, sometimes a fragment of Arabic or transliteration, sometimes a theme. Your job: identify the most likely verse or verses being referenced.
 
 Search across: literal meaning, tafsir tradition (Ibn Kathir, Al-Tabari, As-Sa'di, Ar-Razi), asbab al-nuzul (occasions of revelation), themes, and the stories of prophets.
 
 You will be given up to 15 candidate verses found by text search. These are your primary candidates. Evaluate them carefully against the user's description. If one or more are strong matches, return them. If none are correct but you are certain of the right verse from your own knowledge, return additional matches, but only if you are genuinely certain (confidence 0.9+).
 
-IMPORTANT, ROTATION: You may be given a list of already-shown verse references to EXCLUDE. Do NOT return any verse in that exclusion list.
+IMPORTANT, ROTATION: You may be given a list of already-shown verse references to EXCLUDE. Do NOT return any verse in that exclusion list. The user wants to discover new verses, not see the same ones again. If all obvious matches are excluded, find the next-best matches from across the Quran.
 
 Return ALL plausible matches above 0.3 confidence, up to 10 matches, ordered by confidence descending. Shape:
 [
@@ -22,15 +34,16 @@ Return ALL plausible matches above 0.3 confidence, up to 10 matches, ordered by 
 ]
 
 Confidence scale:
-- 0.9+ = almost certainly the verse
-- 0.6-0.89 = strong candidate
-- 0.3-0.59 = plausible
+- 0.9+ = this is almost certainly the verse (famous story, unique phrase, unmistakable reference)
+- 0.6-0.89 = strong candidate, good match on multiple dimensions
+- 0.3-0.59 = plausible, partial match
 - below 0.3 = do not return
 
 Rules:
-- NEVER fabricate a reference. If unsure, return fewer. If you cannot find any match above 0.3, return [].
-- Always verify the surah and verse number you cite actually contains what the user described.
-- Return the array and nothing else. No prose. No markdown. No backticks.
+- NEVER fabricate a reference. If unsure, return fewer than 3. If you genuinely cannot find any match above 0.3 confidence, return an empty array [].
+- Always verify the surah and verse number you cite actually contains what the user described. Do not guess numbers.
+- Prefer precision over popularity, the most famous verse on a topic is not always the one being remembered.
+- Return the array and nothing else. No prose. No markdown. No backticks around the JSON.
 - One sentence per "reason". Plain text.`;
 
 type RawVerse = {
@@ -84,6 +97,10 @@ function tokenize(q: string): string[] {
     .filter((w) => w.length >= 3 && !STOP.has(w));
 }
 
+/**
+ * Fast text match over all verses. Returns top-N by token overlap score.
+ * Also handles Arabic transliteration fragments and surah names.
+ */
 function findCandidates(verses: RawVerse[], query: string, topN = 15): RawVerse[] {
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
@@ -143,7 +160,7 @@ async function askModel(
 
   const excludeBlock =
     exclude.length > 0
-      ? `\n\nDo NOT return any of these already-shown verses: ${exclude.map((e) => `${e.surah}:${e.ayah}`).join(", ")}.`
+      ? `\n\nDo NOT return any of these already-shown verses, the user has seen them and wants new ones: ${exclude.map((e) => `${e.surah}:${e.ayah}`).join(", ")}.`
       : "";
 
   const userContent = retryHint
@@ -152,13 +169,16 @@ async function askModel(
 
   let raw = "";
   try {
+    // Groq answers in 1-3s, NVIDIA in 8-15s. The timeout is generous enough
+    // for either, tight enough that a stalled provider releases the walk
+    // quickly enough for the next one to answer before the user gives up.
     const result = await chat({
       system: SYSTEM,
       messages: [{ role: "user", content: userContent }],
       maxTokens: 800,
       temperature: 0.4,
-      timeoutMs: 12_000,
-      deadlineMs: 15_000,
+      timeoutMs: 15_000,
+      deadlineMs: 25_000,
       attemptsPerModel: 1,
     });
     raw = result.text;
@@ -166,6 +186,9 @@ async function askModel(
       console.warn(`[reflect] answered by ${result.provider}/${result.model} after ${result.fellBackFrom.join(", ")} failed`);
     }
   } catch (err) {
+    // A total outage is not the same as "no verse matched", and returning
+    // null here made the route tell the user there were no results when the
+    // truth was that nothing had been asked. Let it reach the handler.
     if (err instanceof AiUnavailableError) throw err;
     return null;
   }
@@ -192,6 +215,7 @@ async function validate(
   matches: DetectiveMatch[],
   verses: RawVerse[],
 ): Promise<ValidatedMatch[]> {
+  // Build surah -> max ayah bounds from the real dataset
   const boundsMap = new Map<number, number>();
   for (const v of verses) {
     const cur = boundsMap.get(v.surah) ?? 0;
@@ -202,6 +226,7 @@ async function validate(
   for (const m of matches) {
     const surah = m.surah_number;
     const ayah = m.verse_number;
+    // Must be integers within real dataset bounds
     if (
       !Number.isInteger(surah) || surah < 1 || surah > 114 ||
       !Number.isInteger(ayah) || ayah < 1
@@ -213,7 +238,7 @@ async function validate(
       surah,
       ayah,
       confidence: Math.max(0, Math.min(1, m.confidence)),
-      reason: stripMarkdown(m.reason).slice(0, 300),
+      reason: stripMarkdown(m.reason).slice(0, 300), // cap reason length
     });
   }
   good.sort((a, b) => b.confidence - a.confidence);
@@ -222,19 +247,22 @@ async function validate(
 
 /**
  * Turn text-search candidates into the same shape the model produces.
- * Used when the model is down so the user gets a shorter but real result
- * instead of "AI search is paused".
+ *
+ * Used only after the model has been tried and retried, and both failed.
+ * The verse reference and translation are real; the confidence and the
+ * reason are marked so the client can render them differently if it wants.
  */
 function textSearchFallback(candidates: RawVerse[]): ValidatedMatch[] {
   return candidates.slice(0, 8).map((v, i) => ({
     surah: v.surah,
     ayah: v.ayah,
     confidence: Math.max(0.3, 0.7 - i * 0.05),
-    reason: "Matched on the words in your search."
+    reason: "Matched on the words in your search.",
   }));
 }
 
 export async function POST(req: NextRequest) {
+  // Rate limit: 20 req / 60 s per IP
   const rl = checkRateLimit(getCallerId(req.headers), 20, 60_000);
   if (!rl.ok) {
     return NextResponse.json(
@@ -263,6 +291,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Keep it under 500 characters." }, { status: 400 });
     }
 
+    // Parse exclude list: array of {surah, ayah} sent by client to skip already-seen verses
     const excludeRaw: unknown[] = Array.isArray(body?.exclude) ? body.exclude : [];
     const exclude: ExcludeRef[] = excludeRaw
       .filter(
@@ -272,13 +301,14 @@ export async function POST(req: NextRequest) {
           typeof (e as ExcludeRef).surah === "number" &&
           typeof (e as ExcludeRef).ayah === "number",
       )
-      .slice(0, 80);
+      .slice(0, 80); // cap to keep prompt size reasonable
 
     const verses = await loadVerses();
     const candidates = findCandidates(verses, query.trim(), 15);
 
-    // If no AI providers are configured at all, return the text matches
-    // instead of erroring. The user gets something.
+    // No providers configured at all. The text search still works, so
+    // answer with what it found rather than a 503 the client can only
+    // show as "AI unavailable".
     if (availableProviders().length === 0) {
       return NextResponse.json({
         matches: textSearchFallback(candidates),
@@ -286,9 +316,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // First pass
     let matches = await askModel(query.trim(), candidates, null, exclude);
     let validated = matches ? await validate(matches, verses) : [];
 
+    // Retry once if nothing survived validation. The model sometimes returns
+    // a surah/ayah pair that reads plausible but fails the dataset bounds
+    // check; a second call with the invalid refs named fixes most of those.
     if (validated.length === 0) {
       const invalid = (matches ?? [])
         .map((m) => `${m.surah_number}:${m.verse_number}`)
@@ -298,6 +332,15 @@ export async function POST(req: NextRequest) {
         : "Double-check your numbering against the candidate list.";
       matches = await askModel(query.trim(), candidates, hint, exclude);
       validated = matches ? await validate(matches, verses) : [];
+    }
+
+    // The model failed twice but the text search still has candidates.
+    // A shorter list of real verses beats "AI search is paused".
+    if (validated.length === 0 && candidates.length > 0) {
+      return NextResponse.json({
+        matches: textSearchFallback(candidates),
+        degraded: true,
+      });
     }
 
     if (validated.length === 0) {
@@ -312,19 +355,19 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ matches: validated });
   } catch (err) {
-    // The AI failed but the text search still works. Return its candidates
-    // rather than a 503. A shorter list beats "paused".
-    try {
-      const verses = await loadVerses();
-      const fallback = textSearchFallback(findCandidates(verses, query.trim(), 8));
-      if (fallback.length > 0) {
-        return NextResponse.json({ matches: fallback, degraded: true });
-      }
-    } catch {
-      // fall through to the error response
-    }
-
+    // If the pipeline failed outright (every provider dead), fall back to
+    // text search so the user still sees verses. Only 503 when there is
+    // genuinely nothing to return.
     if (err instanceof AiUnavailableError) {
+      try {
+        const verses = await loadVerses();
+        const fallback = textSearchFallback(findCandidates(verses, query.trim(), 8));
+        if (fallback.length > 0) {
+          return NextResponse.json({ matches: fallback, degraded: true });
+        }
+      } catch {
+        // fall through
+      }
       return NextResponse.json(
         { matches: [], unavailable: true, error: err.message },
         { status: 503 },

@@ -89,7 +89,7 @@ export interface Provider {
   disabledReason?: string;
 }
 
-const DEFAULT_ORDER = ["nvidia", "groq", "gemini", "openai", "ollama"];
+const DEFAULT_ORDER = ["groq", "nvidia", "gemini", "openai", "ollama"];
 
 function csv(value: string | undefined): string[] {
   return (value ?? "")
