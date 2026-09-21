@@ -131,7 +131,9 @@ Write the five sections. Plain text only, no asterisks, no markdown.`;
         system: SYSTEM,
         messages: [{ role: "user", content: userContent }],
         maxTokens: 2048,
-        deadlineMs: 45_000,
+        timeoutMs: 15_000,
+        deadlineMs: 20_000,
+        attemptsPerModel: 1,
       });
       raw = result.text;
       if (result.fellBackFrom.length > 0) {
