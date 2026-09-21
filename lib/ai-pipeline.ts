@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Provider-agnostic chat pipeline.
  *
  * AYAT used to call one provider through lib/nvidia.ts. That file already had
@@ -116,9 +116,9 @@ export function buildProviders(env: NodeJS.ProcessEnv = process.env): Provider[]
       apiKey: env.NVIDIA_API_KEY,
       requiresKey: true,
       models: dedupe([
-        env.NVIDIA_MODEL || "mistralai/mistral-medium-3.5-128b",
+        env.NVIDIA_MODEL || "openai/gpt-oss-20b",
         ...csv(env.NVIDIA_FALLBACK_MODELS),
-        "meta/llama-3.3-70b-instruct"
+        "openai/gpt-oss-120b"
       ])
     },
     groq: {
