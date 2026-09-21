@@ -126,7 +126,7 @@ export function buildProviders(env: NodeJS.ProcessEnv = process.env): Provider[]
       baseUrl: env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
       apiKey: env.GROQ_API_KEY,
       requiresKey: true,
-      models: dedupe([env.GROQ_MODEL || "llama-3.3-70b-versatile"])
+      models: dedupe([env.GROQ_MODEL || "openai/gpt-oss-120b"])
     },
     gemini: {
       id: "gemini",
