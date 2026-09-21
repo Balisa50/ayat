@@ -116,7 +116,7 @@ export function buildProviders(env: NodeJS.ProcessEnv = process.env): Provider[]
       apiKey: env.NVIDIA_API_KEY,
       requiresKey: true,
       models: dedupe([
-        env.NVIDIA_MODEL || "openai/gpt-oss-20b",
+        env.NVIDIA_MODEL || "meta/llama-3.1-70b-instruct",
         ...csv(env.NVIDIA_FALLBACK_MODELS),
       ])
     },
@@ -126,7 +126,7 @@ export function buildProviders(env: NodeJS.ProcessEnv = process.env): Provider[]
       baseUrl: env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
       apiKey: env.GROQ_API_KEY,
       requiresKey: true,
-      models: dedupe([env.GROQ_MODEL || "openai/gpt-oss-120b"])
+      models: dedupe([env.GROQ_MODEL || "llama-3.3-70b-versatile"])
     },
     gemini: {
       id: "gemini",

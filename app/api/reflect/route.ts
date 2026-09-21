@@ -175,7 +175,7 @@ async function askModel(
     const result = await chat({
       system: SYSTEM,
       messages: [{ role: "user", content: userContent }],
-      maxTokens: 800,
+      maxTokens: 2048,
       temperature: 0.4,
       timeoutMs: 15_000,
       deadlineMs: 25_000,
