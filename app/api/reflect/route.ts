@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { checkRateLimit, getCallerId } from "@/lib/rate-limit";
@@ -68,7 +68,7 @@ type ValidatedMatch = {
  reason: string;
 };
 
-// ── Dataset cache ────────────────────────────────────────────────────────
+// â”€â”€ Dataset cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let versesCache: RawVerse[] | null = null;
 
 async function loadVerses(): Promise<RawVerse[]> {
@@ -154,7 +154,7 @@ async function askClaude(
  ? `\n\nThe closest verses found by text search (up to 15 candidates):\n${candidates
  .map(
  (v, i) =>
- `${i + 1}. ${v.surahName} ${v.surah}:${v.ayah}, "${v.translation.slice(0, 120)}${v.translation.length > 120 ? "…" : ""}"`,
+ `${i + 1}. ${v.surahName} ${v.surah}:${v.ayah}, "${v.translation.slice(0, 120)}${v.translation.length > 120 ? "â€¦" : ""}"`,
  )
  .join("\n")}\n\nEvaluate these candidates first. Return the best matches, or a different verse if you are certain it is more accurate.`
  : "";
@@ -177,7 +177,9 @@ async function askClaude(
       messages: [{ role: "user", content: userContent }],
       maxTokens: 800,
       temperature: 0.4,
-      deadlineMs: 22_000,
+      timeoutMs: 25_000,
+      deadlineMs: 35_000,
+      attemptsPerModel: 1,
     });
     raw = result.text;
     if (result.fellBackFrom.length > 0) {
@@ -213,7 +215,7 @@ async function validate(
  matches: DetectiveMatch[],
  verses: RawVerse[],
 ): Promise<ValidatedMatch[]> {
- // Build surah → max ayah bounds from the real dataset
+ // Build surah â†’ max ayah bounds from the real dataset
  const boundsMap = new Map<number, number>();
  for (const v of verses) {
  const cur = boundsMap.get(v.surah) ?? 0;
@@ -244,7 +246,7 @@ async function validate(
 }
 
 export async function POST(req: NextRequest) {
- // ── Rate limit: 20 req / 60 s per IP ──────────────────────────────────
+ // â”€â”€ Rate limit: 20 req / 60 s per IP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  const rl = checkRateLimit(getCallerId(req.headers), 20, 60_000);
  if (!rl.ok) {
  return NextResponse.json(
