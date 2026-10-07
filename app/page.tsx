@@ -37,18 +37,14 @@ export default function Home() {
   const [cursor, setCursor] = useState(-1);
 
   const pushToHistory = useCallback((v: Verse) => {
-    // Compute the next stack from current state, then commit both updates
-    // together. Calling setCursor inside the setHistory updater relied on
-    // React batching the two mutations in the right order, which React 19
-    // does not guarantee when the updater runs during render.
-    const truncated = history.slice(0, cursor + 1);
-    const tail = truncated[truncated.length - 1];
-    const next = tail && tail.id === v.id ? truncated : [...truncated, v];
-    const nextCursor = tail && tail.id === v.id ? cursor : next.length - 1;
-    setHistory(next);
-    setCursor(nextCursor);
+    setHistory((prev) => {
+      const tail = prev[prev.length - 1];
+      const next = tail && tail.id === v.id ? prev : [...prev, v];
+      setCursor(next.length - 1);
+      return next;
+    });
     setSelected(v);
-  }, [history, cursor]);
+  }, []);
 
   const goBack = useCallback(() => {
     if (cursor <= 0) return;
