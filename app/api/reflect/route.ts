@@ -8,51 +8,26 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-/**
- * Verse Detective, grounded in the local dataset.
- *
- * Before asking the model, a text-match pass over all 6,236 verses returns
- * the top candidates. The model's job is to choose between them — not to
- * invent a reference from memory, because the last version let it and the
- * result was plausible-looking surah:ayah pairs that had nothing to do with
- * the query. The instruction is now explicit: pick from the list, or return
- * an empty array. Honesty beats confidence.
- *
- * Two additional candidate sources were added after the first user tests:
- *   1. Explicit references. "2:255", "verse 255 of surah 2", "the throne
- *      verse" as a named anchor → return that verse first, always.
- *   2. Surah names. "Yusuf", "the cave", "Maryam" → return the opening
- *      verses of the named surah, because most users who name a surah want
- *      its famous passage, and the model should not have to guess.
- *
- * Every returned match is validated twice: once against the dataset bounds
- * (does the surah/ayah exist), and once against the verse's own translation
- * (does the text actually contain the query's key terms).
- */
+const SYSTEM = `You are a Quran verse detective. The user will describe a verse, recite part of it, name a surah, or ask about a theme. Your job: choose the best match from the candidate verses you are given.
 
-const SYSTEM = `You are a Quran verse detective. The user will describe a verse, a story, a historical context, a feeling, or anything they remember, sometimes vague, sometimes a fragment of Arabic or transliteration, sometimes a theme. Your job: choose the best match from the candidate verses you are given.
+CRITICAL RULE: Choose ONLY from the candidate verses below. Do not invent a reference. If none fit, return [].
 
-CRITICAL RULE: You must choose ONLY from the candidate verses provided below. Do not invent a reference from your own knowledge. Do not return a surah:ayah pair that is not in the candidate list. If none of the candidates fit the user's description, return an empty array []. Returning nothing is a correct answer.
+If the user's input is a fragment of Arabic, transliteration, or a specific phrase, find the candidate verse that contains that exact fragment FIRST, before considering theme. Return that verse with high confidence.
 
-You will be given up to 20 candidate verses found by text search plus a handful of surah-opening verses if a surah was named. These are your only options.
+If the user named a surah, prefer the candidate verses from that surah.
 
 Return ALL plausible matches above 0.35 confidence, ordered by confidence descending. Shape:
-[
- {"surah_number": <1-114>, "verse_number": <int>, "confidence": <0.0-1.0>, "reason": "<one sentence, plain text>"}
-]
+[{"surah_number":<1-114>,"verse_number":<int>,"confidence":<0-1>,"reason":"<one sentence>"}]
 
-Confidence scale:
-- 0.85-1.00 = this is unmistakably the verse described (unique phrase, famous story, exact wording)
-- 0.60-0.84 = strong match on multiple dimensions
+Confidence:
+- 0.85+ = unmistakable (exact phrase, named story, explicit reference)
+- 0.60-0.84 = strong multi-dimensional match
 - 0.35-0.59 = plausible partial match
 - below 0.35 = do not return
 
-Rules:
-- NEVER return a surah:ayah pair that is not in the candidate list.
-- Every "reason" must name a specific word or phrase from the verse that matches the query. If you cannot point to a specific overlap, do not return the verse.
-- If the candidates include the exact answer, return it with confidence above 0.9. If they only include near-misses, return those at their real confidence, not inflated.
-- Return the array and nothing else. No prose. No markdown. No backticks.
-- One sentence per "reason". Plain text.`;
+Every "reason" must name a specific word or phrase from the verse that matches the query.
+
+Return the array only. No prose. No markdown.`;
 
 type RawVerse = {
   id: number;
@@ -60,6 +35,8 @@ type RawVerse = {
   ayah: number;
   surahName: string;
   translation: string;
+  arabic?: string;
+  transliteration?: string;
 };
 
 type DetectiveMatch = {
@@ -86,7 +63,6 @@ async function loadVerses(): Promise<RawVerse[]> {
   return versesCache;
 }
 
-// Common English stop words. Removed from the query before matching.
 const STOP = new Set([
   "a","an","the","and","or","but","in","on","at","to","for","of","with","by",
   "from","was","is","are","were","been","be","have","has","had","do","does",
@@ -100,15 +76,60 @@ const STOP = new Set([
   "says","said","tell","me","something","anything","thing","things",
 ]);
 
-function tokenize(q: string): string[] {
-  return q
+/** True if the string contains Arabic-script code points. */
+function hasArabic(text: string): boolean {
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (cp >= 0x0600 && cp <= 0x06ff) return true;
+    if (cp >= 0x0750 && cp <= 0x077f) return true;
+    if (cp >= 0xfb50 && cp <= 0xfdff) return true;
+    if (cp >= 0xfe70 && cp <= 0xfeff) return true;
+  }
+  return false;
+}
+
+/**
+ * Strip tashkeel (fatha, kasra, damma, shadda, etc.) and normalise letter
+ * variants so two forms of the same word compare equal. This makes
+ * "قل هو الله أحد" match "قُلْ هُوَ ٱللَّهُ أَحَدٌ" regardless of how the
+ * user typed the diacritics.
+ */
+function normalizeArabic(text: string): string {
+  return text
+    .replace(/[\u064b-\u0652\u0670\u0640]/g, "")
+    .replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627")
+    .replace(/\u0629/g, "\u0647")
+    .replace(/\u0649/g, "\u064a")
+    .replace(/\u0624/g, "\u0648")
+    .replace(/\u0626/g, "\u064a")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Strip diacritics from Latin transliteration (ā -> a, ī -> i, etc.). */
+function normalizeLatin(text: string): string {
+  return text
     .toLowerCase()
-    .replace(/[^\w\s:]/g, " ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/['\u2019\u02bc]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Tokenise a query. Branches on script. */
+function tokenize(q: string): string[] {
+  if (hasArabic(q)) {
+    return normalizeArabic(q)
+      .split(/\s+/)
+      .filter((w) => w.length >= 2);
+  }
+  return normalizeLatin(q)
     .split(/\s+/)
     .filter((w) => w.length >= 3 && !STOP.has(w));
 }
 
-/** Surah-name → number map, matching English names and common alternatives. */
 const SURAH_NAMES: Record<string, number> = {
   "fatiha": 1, "fatihah": 1, "opening": 1,
   "baqarah": 2, "baqara": 2, "cow": 2,
@@ -226,24 +247,20 @@ const SURAH_NAMES: Record<string, number> = {
   "nas": 114, "mankind": 114,
 };
 
-/** Extracts explicit "2:255", "surah 2:255", "verse 255 of surah 2" references. */
 function parseExplicitRef(query: string): { surah: number; ayah: number } | null {
   const q = query.trim();
-  // "2:255", "2.255", "2 255"
   const m1 = q.match(/\b(\d{1,3})\s*[:.\-]\s*(\d{1,3})\b/);
   if (m1) {
     const s = parseInt(m1[1], 10);
     const a = parseInt(m1[2], 10);
     if (s >= 1 && s <= 114 && a >= 1 && a <= 286) return { surah: s, ayah: a };
   }
-  // "verse 255 of surah 2", "ayah 255 in sura 2"
   const m2 = q.match(/\b(?:verse|ayah|ayat|v|a)\s+(\d{1,3})\s+(?:of|in|from)\s+(?:surah|sura|chapter)\s+(\d{1,3})\b/i);
   if (m2) {
     const a = parseInt(m2[1], 10);
     const s = parseInt(m2[2], 10);
     if (s >= 1 && s <= 114 && a >= 1 && a <= 286) return { surah: s, ayah: a };
   }
-  // "surah 2 verse 255", "sura 2 ayah 255"
   const m3 = q.match(/\b(?:surah|sura|chapter)\s+(\d{1,3})\s+(?:verse|ayah|ayat|v|a)\s+(\d{1,3})\b/i);
   if (m3) {
     const s = parseInt(m3[1], 10);
@@ -253,10 +270,8 @@ function parseExplicitRef(query: string): { surah: number; ayah: number } | null
   return null;
 }
 
-/** Detects a named surah ("Yusuf", "the cave", "Maryam") in the query. */
 function parseSurahName(query: string): number | null {
-  const q = query.toLowerCase().replace(/[^\w\s]/g, " ");
-  // Try two-word matches first ("family of imran", "ya sin"), then single.
+  const q = normalizeLatin(query);
   const words = q.split(/\s+/).filter(Boolean);
   for (let i = 0; i < words.length - 1; i++) {
     const two = `${words[i]} ${words[i + 1]}`;
@@ -269,18 +284,13 @@ function parseSurahName(query: string): number | null {
 }
 
 /**
- * Fast text match over all verses. Returns top-N by token overlap score.
- *
- * Two extra candidate sources run before the token pass:
- *   - Explicit reference ("2:255") → that verse goes in first.
- *   - Named surah ("Yusuf") → the first six verses of that surah go in next,
- *     because a named surah almost always means the asker wants its famous
- *     passage, not a random verse with a coincidental word overlap.
+ * Search three fields: translation (weight 1), transliteration (weight 2),
+ * arabic (weight 3). Arabic and transliteration run first so a recited
+ * fragment always beats a coincidental theme match.
  */
 function findCandidates(verses: RawVerse[], query: string, topN = 20): RawVerse[] {
   const seen = new Set<number>();
   const out: RawVerse[] = [];
-
   const push = (v: RawVerse) => {
     if (seen.has(v.id)) return;
     seen.add(v.id);
@@ -302,27 +312,49 @@ function findCandidates(verses: RawVerse[], query: string, topN = 20): RawVerse[
     for (const v of inSurah) push(v);
   }
 
-  const tokens = tokenize(query);
-  if (tokens.length > 0) {
-    const queryLower = query.toLowerCase();
+  const queryIsArabic = hasArabic(query);
+  const normQuery = queryIsArabic ? normalizeArabic(query) : normalizeLatin(query);
+
+  if (queryIsArabic) {
+    // Arabic-direct match: normalise verse.arabic the same way, score by
+    // word overlap. Exact substring gets a big bonus.
     const scored: { verse: RawVerse; score: number }[] = [];
-
     for (const v of verses) {
-      if (seen.has(v.id)) continue;
-      const text = v.translation.toLowerCase();
-      const surahLower = v.surahName.toLowerCase();
-
+      if (seen.has(v.id) || !v.arabic) continue;
+      const normArabic = normalizeArabic(v.arabic);
       let score = 0;
-      for (const t of tokens) {
-        if (text.includes(t)) score += 1;
-        if (surahLower.includes(t)) score += 0.5;
+      if (normArabic.includes(normQuery)) score += 10;
+      for (const t of tokenize(query)) {
+        if (normArabic.includes(t)) score += 3;
       }
-      if (tokens.length >= 2 && text.includes(queryLower)) score += 2;
       if (score > 0) scored.push({ verse: v, score });
     }
-
     scored.sort((a, b) => b.score - a.score);
     for (const s of scored.slice(0, topN - out.length)) push(s.verse);
+  } else {
+    // Latin query: score translation + transliteration.
+    const tokens = tokenize(query);
+    if (tokens.length > 0) {
+      const scored: { verse: RawVerse; score: number }[] = [];
+      for (const v of verses) {
+        if (seen.has(v.id)) continue;
+        const text = v.translation.toLowerCase();
+        const translit = v.transliteration ? normalizeLatin(v.transliteration) : "";
+        const surahLower = v.surahName.toLowerCase();
+
+        let score = 0;
+        for (const t of tokens) {
+          if (text.includes(t)) score += 1;
+          if (translit.includes(t)) score += 2;
+          if (surahLower.includes(t)) score += 0.5;
+        }
+        if (tokens.length >= 2 && text.includes(normQuery)) score += 2;
+        if (tokens.length >= 2 && translit.includes(normQuery)) score += 4;
+        if (score > 0) scored.push({ verse: v, score });
+      }
+      scored.sort((a, b) => b.score - a.score);
+      for (const s of scored.slice(0, topN - out.length)) push(s.verse);
+    }
   }
 
   return out;
@@ -356,10 +388,10 @@ async function askModel(
       ? `\n\nCandidate verses (choose ONLY from this list):\n${candidates
           .map(
             (v, i) =>
-              `${i + 1}. ${v.surahName} ${v.surah}:${v.ayah}, "${v.translation.slice(0, 160)}${v.translation.length > 160 ? "..." : ""}"`,
+              `${i + 1}. ${v.surahName} ${v.surah}:${v.ayah}, "${v.translation.slice(0, 160)}${v.translation.length > 160 ? "..." : ""}"${v.arabic ? ` [arabic: ${v.arabic.slice(0, 100)}]` : ""}`,
           )
           .join("\n")}\n\nReturn the best matches from this list, or [] if none fit. Do not invent any reference not shown above.`
-      : "\n\nNo candidate verses matched the query text. Return [] — do not invent a reference.";
+      : "\n\nNo candidate verses matched. Return [] — do not invent a reference.";
 
   const excludeBlock =
     exclude.length > 0
@@ -367,7 +399,7 @@ async function askModel(
       : "";
 
   const userContent = retryHint
-    ? `${query}${candidateBlock}${excludeBlock}\n\n(Previous attempt returned references outside the candidate list. Return ONLY candidates from the numbered list above, or [].)`
+    ? `${query}${candidateBlock}${excludeBlock}\n\n(Previous attempt returned references outside the list. Return ONLY from the numbered list above, or [].)`
     : `${query}${candidateBlock}${excludeBlock}`;
 
   let raw = "";
@@ -408,16 +440,6 @@ async function askModel(
   return out;
 }
 
-/**
- * Two-layer validation.
- *
- * Layer 1: dataset bounds. Is the surah/ayah actually in the Quran?
- * Layer 2: translation match. Does the verse text contain at least one of
- * the query's key terms? A model that says "this verse about mercy" and
- * points at verse 2:35 (which is not about mercy) fails layer 2, and the
- * match is dropped. This is what stops the wrong-verse output that survived
- * the range check in the previous version.
- */
 async function validate(
   matches: DetectiveMatch[],
   verses: RawVerse[],
@@ -429,6 +451,7 @@ async function validate(
     if (v.ayah > cur) boundsMap.set(v.surah, v.ayah);
   }
 
+  const queryIsArabic = hasArabic(query);
   const queryTokens = new Set(tokenize(query));
 
   const good: ValidatedMatch[] = [];
@@ -443,21 +466,26 @@ async function validate(
     if (!max || ayah > max) continue;
     if (m.confidence < 0.35) continue;
 
-    // Layer 2: the verse's own translation must overlap the query terms,
-    // unless the query was tiny (1-2 terms) or was an explicit reference.
     const verse = verses.find((v) => v.surah === surah && v.ayah === ayah);
     if (verse && queryTokens.size >= 2) {
-      const text = verse.translation.toLowerCase();
-      const surahNameLower = verse.surahName.toLowerCase();
-      let overlap = 0;
-      for (const t of queryTokens) {
-        if (text.includes(t) || surahNameLower.includes(t)) overlap++;
-      }
-      // Require at least one overlap OR a named-surah match.
-      const namedSurah = parseSurahName(query);
-      const matchesNamedSurah = namedSurah !== null && surah === namedSurah;
       const explicit = parseExplicitRef(query);
       const matchesExplicit = explicit !== null && surah === explicit.surah && ayah === explicit.ayah;
+      const namedSurah = parseSurahName(query);
+      const matchesNamedSurah = namedSurah !== null && surah === namedSurah;
+
+      let overlap = 0;
+      if (queryIsArabic && verse.arabic) {
+        const normArabic = normalizeArabic(verse.arabic);
+        for (const t of queryTokens) {
+          if (normArabic.includes(t)) overlap++;
+        }
+      } else {
+        const text = verse.translation.toLowerCase();
+        const translit = verse.transliteration ? normalizeLatin(verse.transliteration) : "";
+        for (const t of queryTokens) {
+          if (text.includes(t) || translit.includes(t)) overlap++;
+        }
+      }
       if (overlap === 0 && !matchesNamedSurah && !matchesExplicit) continue;
     }
 
@@ -472,13 +500,6 @@ async function validate(
   return good.slice(0, 10);
 }
 
-/**
- * Turn text-search candidates into the same shape the model produces.
- *
- * Used only after the model has been tried and retried, and both failed.
- * The verse reference and translation are real; the confidence is set low
- * so the client renders them as a fallback tier, not a strong answer.
- */
 function textSearchFallback(candidates: RawVerse[]): ValidatedMatch[] {
   return candidates.slice(0, 8).map((v, i) => ({
     surah: v.surah,
