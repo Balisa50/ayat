@@ -37,20 +37,18 @@ export default function Home() {
   const [cursor, setCursor] = useState(-1);
 
   const pushToHistory = useCallback((v: Verse) => {
-    setHistory((prev) => {
-      // Truncate forward entries when the reader picks a new verse from the
-      // galaxy. This is the same rule browsers use for a new navigation.
-      const truncated = prev.slice(0, cursor + 1);
-      // If the same verse is already at the cursor, do not duplicate it.
-      if (truncated.length > 0 && truncated[truncated.length - 1].id === v.id) {
-        return truncated;
-      }
-      const next = [...truncated, v];
-      setCursor(next.length - 1);
-      return next;
-    });
+    // Compute the next stack from current state, then commit both updates
+    // together. Calling setCursor inside the setHistory updater relied on
+    // React batching the two mutations in the right order, which React 19
+    // does not guarantee when the updater runs during render.
+    const truncated = history.slice(0, cursor + 1);
+    const tail = truncated[truncated.length - 1];
+    const next = tail && tail.id === v.id ? truncated : [...truncated, v];
+    const nextCursor = tail && tail.id === v.id ? cursor : next.length - 1;
+    setHistory(next);
+    setCursor(nextCursor);
     setSelected(v);
-  }, [cursor]);
+  }, [history, cursor]);
 
   const goBack = useCallback(() => {
     if (cursor <= 0) return;

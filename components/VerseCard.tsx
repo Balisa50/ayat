@@ -9,7 +9,6 @@ import type { Verse } from "@/lib/types";
 import { useReminders } from "./Reminders";
 import { FloatingReciteButton } from "./FloatingReciteButton";
 
-// ─── Five-section parser ─────────────────────────────────────────────────
 type Section = { key: string; label: string; body: string };
 const SECTION_MAP: Record<string, string> = {
   SCENE: "The moment",
@@ -41,7 +40,6 @@ function parseNextRef(body: string): { surah: number; ayah: number; reason: stri
   return { surah: parseInt(m[1], 10), ayah: parseInt(m[2], 10), reason: m[3].trim() };
 }
 
-// ─── Reciter catalog ──────────────────────────────────────────────────────
 const RECITERS = [
   { id: "7", label: "Mishary Al Afasy" },
   { id: "3", label: "Abdul Rahman Al Sudais" },
@@ -64,7 +62,6 @@ const RECITERS = [
 ] as const;
 const RECITER_STORAGE_KEY = "ayat:reciter";
 
-// ─── Segment helpers ─────────────────────────────────────────────────────
 type Segment = number[];
 
 function activeWordAt(segments: Segment[], timeMs: number): number {
@@ -547,10 +544,6 @@ export function VerseCard({
     }
   }, [reminders]);
 
-  // Keyboard navigation: left arrow = back, right arrow = forward. Ignored
-  // while the reader is typing in an input so the arrow keys still move the
-  // caret inside text fields, and ignored when a modifier is held so browser
-  // shortcuts (Cmd+Left, Alt+Left) still work.
   useEffect(() => {
     if (!verse) return;
     const onKey = (e: KeyboardEvent) => {
@@ -577,15 +570,18 @@ export function VerseCard({
     : null;
 
   const showNav = true;
+  const verseKey = currentVerse?.id ?? "none";
 
   return (
     <>
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {verse && (
           <motion.div
+            key={verseKey}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="fixed inset-0 z-30 flex items-center justify-center px-4 py-8 pointer-events-none"
           >
             <motion.div
@@ -593,6 +589,7 @@ export function VerseCard({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 16, scale: 0.98 }}
               transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              layout="size"
               ref={bodyRef}
               onScroll={onBodyScroll}
               className={`relative w-full max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl shadow-2xl min-h-[120px] max-h-[90vh] overflow-y-auto pointer-events-auto ${
@@ -626,8 +623,7 @@ export function VerseCard({
                 </div>
               )}
 
-              {/* Header: navigation strip on the left, surah name on the right */}
-              <div className="mb-6 flex items-center justify-between gap-4">
+              <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
                 {showNav && (
                   <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-1.5 py-1">
                     <button
@@ -635,7 +631,6 @@ export function VerseCard({
                       disabled={!canGoBack}
                       className="flex h-6 w-6 items-center justify-center rounded-full text-white/55 transition-colors hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white/55"
                       aria-label="Previous verse"
-                      title="Previous verse (←)"
                     >
                       <ArrowLeft className="h-3.5 w-3.5" />
                     </button>
@@ -647,7 +642,6 @@ export function VerseCard({
                       disabled={!canGoForward}
                       className="flex h-6 w-6 items-center justify-center rounded-full text-white/55 transition-colors hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white/55"
                       aria-label="Next verse"
-                      title="Next verse (→)"
                     >
                       <ArrowRight className="h-3.5 w-3.5" />
                     </button>
@@ -662,13 +656,23 @@ export function VerseCard({
                 <div className="min-h-[7rem] mb-6">
                   {bismillahWords && (
                     <div className="mb-4">
-                      <p dir="rtl" className="arabic text-center text-[clamp(1rem,2.2vw,1.4rem)] text-white/38 leading-relaxed tracking-wide">
+                      <p
+                        dir="rtl"
+                        lang="ar"
+                        className="arabic text-center text-[clamp(1rem,2.2vw,1.4rem)] text-white/38 leading-[2] tracking-normal break-words"
+                        style={{ wordSpacing: "0.15em" }}
+                      >
                         {bismillahWords.join(" ")}
                       </p>
                       <div className="mt-3 border-t border-white/10" />
                     </div>
                   )}
-                  <p dir="rtl" className="arabic text-right text-[clamp(1.5rem,3.5vw,2.25rem)] text-white leading-relaxed">
+                  <p
+                    dir="rtl"
+                    lang="ar"
+                    className="arabic text-right text-[clamp(1.4rem,3.2vw,2.25rem)] text-white leading-[2.1] tracking-normal break-words"
+                    style={{ wordSpacing: "0.15em" }}
+                  >
                     {words.map((w, i) => (
                       <span
                         key={i}
@@ -684,12 +688,12 @@ export function VerseCard({
                   </p>
                 </div>
                 <div className="min-h-[3rem] mb-4">
-                  <p className="font-serif-fine italic text-white/55 text-sm md:text-base leading-relaxed">
+                  <p className="font-serif-fine italic text-white/55 text-sm md:text-base leading-relaxed break-words">
                     {currentVerse.transliteration}
                   </p>
                 </div>
                 <div className="min-h-[4.5rem] mb-5">
-                  <p className="font-serif-fine text-white/90 text-base md:text-lg leading-relaxed">
+                  <p className="font-serif-fine text-white/90 text-base md:text-lg leading-relaxed break-words">
                     {currentVerse.translation}
                   </p>
                 </div>
@@ -804,7 +808,7 @@ export function VerseCard({
                   <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">
                     For what you carried here
                   </div>
-                  <p className="font-serif-fine text-white/90 text-sm md:text-base leading-relaxed">{reflection}</p>
+                  <p className="font-serif-fine text-white/90 text-sm md:text-base leading-relaxed break-words">{reflection}</p>
                 </div>
               )}
 
@@ -842,13 +846,13 @@ export function VerseCard({
                         {sections.filter((s) => s.key === "SCENE" || s.key === "MEANING" || s.key === "HITS").map(({ key, label, body }) => (
                           <div key={key}>
                             <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-1.5">{label}</div>
-                            <p className="font-serif-fine text-white/85 text-sm md:text-base leading-relaxed">{body}</p>
+                            <p className="font-serif-fine text-white/85 text-sm md:text-base leading-relaxed break-words">{body}</p>
                           </div>
                         ))}
                         {sections.find((s) => s.key === "REFLECT") && (
                           <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.03] p-5">
                             <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">Reflect</div>
-                            <p className="font-serif-fine italic text-white text-base md:text-lg leading-relaxed">
+                            <p className="font-serif-fine italic text-white text-base md:text-lg leading-relaxed break-words">
                               {sections.find((s) => s.key === "REFLECT")!.body}
                             </p>
                           </div>
@@ -870,7 +874,7 @@ export function VerseCard({
                                 <ArrowRight className="h-4 w-4 text-white/40 group-hover:text-white/90 group-hover:translate-x-0.5 transition-all" />
                               </button>
                             ) : (
-                              <p className="font-serif-fine text-white/70 text-sm leading-relaxed">{nextSection.body}</p>
+                              <p className="font-serif-fine text-white/70 text-sm leading-relaxed break-words">{nextSection.body}</p>
                             )}
                           </div>
                         )}
@@ -879,7 +883,7 @@ export function VerseCard({
                     {contextRequested && !loadingContext && !context && (
                       <div className="rounded-xl border border-white/8 bg-white/[0.02] px-5 py-4 text-center">
                         <p className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">AI commentary is paused</p>
-                        <p className="font-serif-fine italic text-white/65 text-[13px] leading-relaxed">
+                        <p className="font-serif-fine italic text-white/65 text-[13px] leading-relaxed break-words">
                           We&apos;re between API top-ups. The verse, translation, recitation, and the rest of the app work as normal. The verse itself is more than enough - sit with it.
                         </p>
                       </div>
