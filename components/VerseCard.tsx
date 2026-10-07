@@ -623,9 +623,9 @@ export function VerseCard({
                 </div>
               )}
 
-              <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:pr-24">
+              <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
                 {showNav && (
-                  <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-1.5 py-1 w-fit">
+                  <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-1.5 py-1">
                     <button
                       onClick={onBack}
                       disabled={!canGoBack}
@@ -647,9 +647,8 @@ export function VerseCard({
                     </button>
                   </div>
                 )}
-                <div className="font-serif-fine text-xs uppercase tracking-[0.25em] text-white/50 whitespace-nowrap w-fit">
+                <div className="font-serif-fine text-xs uppercase tracking-[0.25em] text-white/50">
                   {currentVerse.surahName} · {currentVerse.ayah}
-                </div>
                 </div>
               </div>
 
