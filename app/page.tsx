@@ -69,10 +69,13 @@ export default function Home() {
   // Clear history when the card is dismissed. Preserving it across close
   // and reopen would be confusing — the reader has left the reading
   // session, so the next star tap should start a fresh stack.
+  // Close the card but keep the reading history. The reader who closes the
+  // card to look at the galaxy and then taps a new star is continuing the
+  // same session, not starting a new one — losing the trail on every close
+  // was the wrong default. History is only cleared when a new search begins
+  // or the page reloads.
   const closeCard = useCallback(() => {
     setSelected(null);
-    setHistory([]);
-    setCursor(-1);
   }, []);
 
   // Mute the auto-reminder rail whenever a verse card is open.
