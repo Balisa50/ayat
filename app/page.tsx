@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -28,55 +28,13 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Verse | null>(null);
 
-  // Reading history, browser-style. Every verse the reader opens is pushed
-  // onto the stack; back and forward move the cursor without discarding
-  // entries. Tapping a new star from the galaxy truncates anything ahead of
-  // the cursor, which is what a reader expects when they navigate away
-  // mid-history and pick something else.
-  const [history, setHistory] = useState<Verse[]>([]);
-  const [cursor, setCursor] = useState(-1);
-
-  const pushToHistory = useCallback((v: Verse) => {
-    setHistory((prev) => {
-      const tail = prev[prev.length - 1];
-      const next = tail && tail.id === v.id ? prev : [...prev, v];
-      setCursor(next.length - 1);
-      return next;
-    });
-    setSelected(v);
-  }, []);
-
-  const goBack = useCallback(() => {
-    if (cursor <= 0) return;
-    const next = cursor - 1;
-    setCursor(next);
-    setSelected(history[next]);
-  }, [cursor, history]);
-
-  const goForward = useCallback(() => {
-    if (cursor >= history.length - 1) return;
-    const next = cursor + 1;
-    setCursor(next);
-    setSelected(history[next]);
-  }, [cursor, history]);
-
-  // Clear history when the card is dismissed. Preserving it across close
-  // and reopen would be confusing — the reader has left the reading
-  // session, so the next star tap should start a fresh stack.
-  // Close the card but keep the reading history. The reader who closes the
-  // card to look at the galaxy and then taps a new star is continuing the
-  // same session, not starting a new one — losing the trail on every close
-  // was the wrong default. History is only cleared when a new search begins
-  // or the page reloads.
-  const closeCard = useCallback(() => {
-    setSelected(null);
-  }, []);
-
   // Mute the auto-reminder rail whenever a verse card is open.
   useEffect(() => {
     reminders.setMuted(!!selected);
   }, [selected, reminders]);
 
+  // Tag the document while a verse card is open, so global CSS can hide any
+  // bottom-fixed UI that forgets to gate itself.
   useEffect(() => {
     if (typeof document === "undefined") return;
     if (selected) document.documentElement.dataset.cardOpen = "1";
@@ -109,14 +67,14 @@ export default function Home() {
   useEffect(() => {
     if (tourStep === 1 && selected !== null) {
       const t = setTimeout(() => {
-        closeCard();
+        setSelected(null);
         setAskReflection(null);
         setIsDaily(false);
         setTourStep(2);
       }, 1800);
       return () => clearTimeout(t);
     }
-  }, [selected, tourStep, closeCard]);
+  }, [selected, tourStep]);
 
   useEffect(() => {
     if (tourStep === 2 && query) setTourStep(3);
@@ -158,6 +116,8 @@ export default function Home() {
 
   const { semantic } = useSemanticSearch(verses, query);
 
+  // Union, never replace. If semantic search fails to load, the literal
+  // path is untouched and the app behaves as it always did.
   const matched = useMemo(() => {
     if (!semantic || semantic.ids.length === 0) return literalMatched;
     const out = new Set(literalMatched);
@@ -180,7 +140,7 @@ export default function Home() {
     const daily = pickDailyVerse(verses);
     if (!daily) return;
     const t = setTimeout(() => {
-      pushToHistory(daily);
+      setSelected(daily);
       setIsDaily(true);
       try { localStorage.setItem(DAILY_STORAGE_KEY, today); } catch {}
     }, 600);
@@ -217,24 +177,25 @@ export default function Home() {
     setQuery("");
     setPulseIds(new Set(resolved.map((r) => r.verse.id)));
 
+    // Single match opens on its own after the shooting-star animation.
     if (resolved.length === 1) {
       const only = resolved[0];
       setTimeout(() => {
         setPulseIds(undefined);
         setPulseScores(new Map());
         setAskReflection(only.m.reason);
-        pushToHistory(only.verse);
+        setSelected(only.verse);
         reminders.trigger("detective-hit");
       }, 3200);
     }
-  }, [verses, reminders, pushToHistory]);
+  }, [verses, reminders]);
 
   const handleSelectVerse = useCallback((v: Verse) => {
     if (pulseIds?.has(v.id)) {
       reminders.trigger("detective-hit");
     }
-    pushToHistory(v);
-  }, [pulseIds, reminders, pushToHistory]);
+    setSelected(v);
+  }, [pulseIds, reminders]);
 
   return (
     <main className="relative h-screen w-screen overflow-hidden cosmos-bg">
@@ -287,24 +248,22 @@ export default function Home() {
         allVerses={verses}
         reflection={askReflection}
         isDaily={isDaily}
-        onClose={closeCard}
-        onJumpToVerse={(v) => {
+        onClose={() => {
+          setSelected(null);
+          setAskReflection(null);
+          setIsDaily(false);
+        }}
+        onNavigate={(v) => {
           reminders.bumpChain();
           setAskReflection(null);
           setIsDaily(false);
-          pushToHistory(v);
+          setSelected(v);
         }}
-        onBack={goBack}
-        onForward={goForward}
-        position={cursor + 1}
-        total={history.length}
-        canGoBack={cursor > 0}
-        canGoForward={cursor < history.length - 1}
       />
 
       {!verses && entryDone && (
         <div className="fixed inset-0 z-10 flex items-center justify-center">
-          <p className="font-serif-fine italic text-white/60">Unfolding the cosmos…</p>
+          <p className="font-serif-fine italic text-white/60">Unfolding the cosmos...</p>
         </div>
       )}
 

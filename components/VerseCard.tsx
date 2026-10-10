@@ -1,15 +1,16 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePersistedState } from "@/lib/use-persisted-state";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Volume2, ArrowRight, ArrowLeft, Sparkles, StopCircle, Repeat } from "lucide-react";
+import { X, Volume2, ArrowRight, ChevronLeft, ChevronRight, Sparkles, StopCircle, Repeat } from "lucide-react";
 import type { Verse } from "@/lib/types";
 import { useReminders } from "./Reminders";
 import { FloatingReciteButton } from "./FloatingReciteButton";
 
 type Section = { key: string; label: string; body: string };
+
 const SECTION_MAP: Record<string, string> = {
   SCENE: "The moment",
   MEANING: "What it's saying",
@@ -17,6 +18,7 @@ const SECTION_MAP: Record<string, string> = {
   REFLECT: "Reflect",
   NEXT: "Read next",
 };
+
 function parseContext(raw: string): Section[] {
   const keys = Object.keys(SECTION_MAP);
   const re = new RegExp(`^(${keys.join("|")})\\s*:\\s*(.*)$`, "i");
@@ -28,14 +30,17 @@ function parseContext(raw: string): Section[] {
     if (m) {
       if (current) out.push(current);
       current = { key: m[1].toUpperCase(), label: SECTION_MAP[m[1].toUpperCase()], body: m[2] };
-    } else if (current) current.body += " " + line;
+    } else if (current) {
+      current.body += " " + line;
+    }
   }
   if (current) out.push(current);
   if (out.length === 0) return [{ key: "FALLBACK", label: "Context", body: raw }];
   return keys.map((k) => out.find((s) => s.key === k)).filter((s): s is Section => Boolean(s));
 }
+
 function parseNextRef(body: string): { surah: number; ayah: number; reason: string } | null {
-  const m = body.match(/(\d+)\s*:\s*(\d+)\s*[·, \-, :]*\s*(.*)$/);
+  const m = body.match(/(\d+)\s*:\s*(\d+)\s*[\u00b7, \-, :]*\s*(.*)$/);
   if (!m) return null;
   return { surah: parseInt(m[1], 10), ayah: parseInt(m[2], 10), reason: m[3].trim() };
 }
@@ -60,6 +65,7 @@ const RECITERS = [
   { id: "basfar", label: "Abdullah Basfar" },
   { id: "budair", label: "Salah Al Budair" },
 ] as const;
+
 const RECITER_STORAGE_KEY = "ayat:reciter";
 
 type Segment = number[];
@@ -98,26 +104,14 @@ export function VerseCard({
   reflection,
   isDaily,
   onClose,
-  onJumpToVerse,
-  onBack,
-  onForward,
-  position,
-  total,
-  canGoBack,
-  canGoForward,
+  onNavigate,
 }: {
   verse: Verse | null;
   allVerses: Verse[] | null;
   reflection?: string | null;
   isDaily?: boolean;
   onClose: () => void;
-  onJumpToVerse: (v: Verse) => void;
-  onBack?: () => void;
-  onForward?: () => void;
-  position?: number;
-  total?: number;
-  canGoBack?: boolean;
-  canGoForward?: boolean;
+  onNavigate: (v: Verse) => void;
 }) {
   const reminders = useReminders();
 
@@ -162,6 +156,7 @@ export function VerseCard({
   const nextAudioWarmRef = useRef(false);
 
   const skipAudioResetRef = useRef(false);
+  const resumeAfterFetchRef = useRef(false);
 
   const reciterIdRef = useRef(reciterId);
   useEffect(() => { reciterIdRef.current = reciterId; }, [reciterId]);
@@ -177,6 +172,25 @@ export function VerseCard({
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const readFullyTriggeredRef = useRef(false);
+
+  // Prev and next within the SAME surah. Reading a Quran is not browser
+  // history: tapping back while reading Al-Ahzab 33:3 means Al-Ahzab 33:2,
+  // not the last star you tapped on the galaxy.
+  const { prevInSurah, nextInSurah, positionInSurah, surahLength } = useMemo(() => {
+    if (!allVerses || !currentVerse) {
+      return { prevInSurah: null, nextInSurah: null, positionInSurah: 0, surahLength: 0 };
+    }
+    const inSurah = allVerses
+      .filter((v) => v.surah === currentVerse.surah)
+      .sort((a, b) => a.ayah - b.ayah);
+    const idx = inSurah.findIndex((v) => v.ayah === currentVerse.ayah);
+    return {
+      prevInSurah: idx > 0 ? inSurah[idx - 1] : null,
+      nextInSurah: idx >= 0 && idx < inSurah.length - 1 ? inSurah[idx + 1] : null,
+      positionInSurah: idx >= 0 ? idx + 1 : 0,
+      surahLength: inSurah.length,
+    };
+  }, [allVerses, currentVerse]);
 
   useEffect(() => {
     setChainVerse(null);
@@ -253,6 +267,11 @@ export function VerseCard({
       return;
     }
 
+    const wasPlaying = playing && audioRef.current !== null;
+    if (wasPlaying && !resumeAfterFetchRef.current) {
+      resumeAfterFetchRef.current = true;
+    }
+
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.onended = null;
@@ -277,6 +296,7 @@ export function VerseCard({
       })
       .catch(() => {});
     return () => ctrl.abort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVerse, reciterId]);
 
   const triggerPrefetch = useCallback(() => {
@@ -344,15 +364,12 @@ export function VerseCard({
 
         skipAudioResetRef.current = true;
         audioRef.current = nextAudio;
-
         chainVerseRef.current = nextV;
-
         setTextVisible(false);
-
         setChainVerse(nextV);
         setAudioUrl(nextAudioUrlRef.current);
         setSegments(nextSegmentsRef.current.length > 0 ? [...nextSegmentsRef.current] : []);
-        setAutoStatus(`${nextV.surahName} · ${nextV.ayah}`);
+        setAutoStatus(`${nextV.surahName} \u00b7 ${nextV.ayah}`);
 
         nextAudioRef.current = null;
         nextAudioUrlRef.current = null;
@@ -400,7 +417,7 @@ export function VerseCard({
               setTextVisible(false);
               chainVerseRef.current = firstVerse;
               setChainVerse(firstVerse);
-              setAutoStatus(`${firstVerse.surahName} · looping`);
+              setAutoStatus(`${firstVerse.surahName} \u00b7 looping`);
               prefetchDoneRef.current = false;
               setTimeout(() => setTextVisible(true), 80);
               return;
@@ -414,15 +431,20 @@ export function VerseCard({
         }
         setTextVisible(false);
         setChainVerse(nextVFallback);
-        setAutoStatus(`${nextVFallback.surahName} · ${nextVFallback.ayah}`);
+        setAutoStatus(`${nextVFallback.surahName} \u00b7 ${nextVFallback.ayah}`);
         prefetchDoneRef.current = false;
         setTimeout(() => setTextVisible(true), 80);
       }
     };
   });
 
+  // Fires after a fresh audioUrl lands. Autoplays when Continue mode is on
+  // OR when the user tapped prev/next while audio was playing.
   useEffect(() => {
-    if (!autoRef.current || !audioUrl || playing || audioRef.current) return;
+    if (!audioUrl || playing || audioRef.current) return;
+    const shouldAutoPlay = autoRef.current || resumeAfterFetchRef.current;
+    if (!shouldAutoPlay) return;
+    resumeAfterFetchRef.current = false;
     const a = new Audio();
     a.crossOrigin = "anonymous";
     a.src = audioUrl;
@@ -430,7 +452,7 @@ export function VerseCard({
     a.onerror = () => setPlaying(false);
     audioRef.current = a;
     a.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-  }, [audioUrl]);
+  }, [audioUrl, playing]);
 
   useEffect(() => {
     if (!playing || !audioRef.current) return;
@@ -511,7 +533,7 @@ export function VerseCard({
   const handleStartAutoPlay = useCallback(() => {
     autoRef.current = true;
     setAutoActive(true);
-    setAutoStatus("Continuing…");
+    setAutoStatus("Continuing...");
     if (!playing) toggleAudio();
     if (!prefetchDoneRef.current) {
       prefetchDoneRef.current = true;
@@ -544,23 +566,32 @@ export function VerseCard({
     }
   }, [reminders]);
 
+  const goPrev = useCallback(() => {
+    if (!prevInSurah) return;
+    resumeAfterFetchRef.current = playing;
+    setChainVerse(null);
+    onNavigate(prevInSurah);
+  }, [prevInSurah, playing, onNavigate]);
+
+  const goNext = useCallback(() => {
+    if (!nextInSurah) return;
+    resumeAfterFetchRef.current = playing;
+    setChainVerse(null);
+    onNavigate(nextInSurah);
+  }, [nextInSurah, playing, onNavigate]);
+
   useEffect(() => {
     if (!verse) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
-      if (e.key === "ArrowLeft" && canGoBack && onBack) {
-        e.preventDefault();
-        onBack();
-      } else if (e.key === "ArrowRight" && canGoForward && onForward) {
-        e.preventDefault();
-        onForward();
-      }
+      if (e.key === "ArrowLeft") { e.preventDefault(); goPrev(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); goNext(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [verse, canGoBack, canGoForward, onBack, onForward]);
+  }, [verse, goPrev, goNext]);
 
   const sections = useMemo(() => (context ? parseContext(context) : []), [context]);
   const nextSection = sections.find((s) => s.key === "NEXT");
@@ -569,34 +600,291 @@ export function VerseCard({
     ? allVerses.find((v) => v.surah === nextRef.surah && v.ayah === nextRef.ayah)
     : null;
 
-  const showNav = true;
-  const verseKey = currentVerse?.id ?? "none";
-
   return (
     <>
-      <AnimatePresence mode="wait">
+      <AnimatePresence>
         {verse && (
           <motion.div
-            key={verseKey}
+            key="card-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="fixed inset-0 z-30 flex items-center justify-center px-4 py-8 pointer-events-none"
           >
-            <motion.div
-              initial={{ opacity: 0, y: 24, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 16, scale: 0.98 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-              layout="size"
-              ref={bodyRef}
-              onScroll={onBodyScroll}
-              className={`relative w-full max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl shadow-2xl min-h-[120px] max-h-[90vh] overflow-y-auto pointer-events-auto ${
-                compact ? "p-6 md:p-6 lg:p-7" : "p-6 md:p-10 lg:p-14"
-              }`}
-            >
-              <div className="absolute right-4 top-4 flex items-center gap-1">
+            <div className="relative w-full max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl pointer-events-auto">
+              <motion.div
+                layout="size"
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                initial={{ opacity: 0, y: 24, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 16, scale: 0.98 }}
+                ref={bodyRef}
+                onScroll={onBodyScroll}
+                className={`rounded-2xl border border-white/10 bg-black/75 backdrop-blur-xl shadow-2xl min-h-[120px] max-h-[90vh] overflow-y-auto ${
+                  compact ? "p-6 md:p-6 lg:p-7" : "p-6 md:p-10 lg:p-14"
+                }`}
+              >
+                {isDaily && (
+                  <div className="mb-5 flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 w-fit">
+                    <Sparkles className="h-3 w-3 text-white/60" />
+                    <span className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/70">
+                      Something found you today
+                    </span>
+                  </div>
+                )}
+
+                <div className="mb-6 flex flex-col gap-2">
+                  <div className="font-serif-fine text-xs uppercase tracking-[0.25em] text-white/50 whitespace-nowrap">
+                    {currentVerse.surahName} \u00b7 {positionInSurah} of {surahLength}
+                  </div>
+                </div>
+
+                <div style={{ opacity: textVisible ? 1 : 0, transition: "opacity 80ms ease" }}>
+                  <div className="min-h-[7rem] mb-6">
+                    {bismillahWords && (
+                      <div className="mb-4">
+                        <p
+                          dir="rtl"
+                          lang="ar"
+                          className="arabic text-center text-[clamp(1rem,2.2vw,1.4rem)] text-white/38 leading-[2] tracking-normal break-words"
+                          style={{ wordSpacing: "0.15em" }}
+                        >
+                          {bismillahWords.join(" ")}
+                        </p>
+                        <div className="mt-3 border-t border-white/10" />
+                      </div>
+                    )}
+                    <p
+                      dir="rtl"
+                      lang="ar"
+                      className="arabic text-right text-[clamp(1.4rem,3.2vw,2.25rem)] text-white leading-[2.1] tracking-normal break-words"
+                      style={{ wordSpacing: "0.15em" }}
+                    >
+                      {words.map((w, i) => (
+                        <span
+                          key={i}
+                          className={
+                            i === currentWord
+                              ? "text-[#ffd700] [text-shadow:0_0_18px_rgba(255,215,0,0.85),0_0_4px_rgba(255,215,0,0.95)] transition-[color,text-shadow] duration-150"
+                              : "text-white transition-[color,text-shadow] duration-300"
+                          }
+                        >
+                          {w}{i < words.length - 1 ? " " : ""}
+                        </span>
+                      ))}
+                    </p>
+                  </div>
+                  <div className="min-h-[3rem] mb-4">
+                    <p className="font-serif-fine italic text-white/55 text-sm md:text-base leading-relaxed break-words">
+                      {currentVerse.transliteration}
+                    </p>
+                  </div>
+                  <div className="min-h-[4.5rem] mb-5">
+                    <p className="font-serif-fine text-white/90 text-base md:text-lg leading-relaxed break-words">
+                      {currentVerse.translation}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                    <button
+                      ref={reciterBtnRef}
+                      onClick={() => {
+                        const btn = reciterBtnRef.current;
+                        if (btn) {
+                          const r = btn.getBoundingClientRect();
+                          const above = r.top > window.innerHeight / 2;
+                          setDropPos({
+                            left: r.left,
+                            right: r.right,
+                            y: above ? r.top : r.bottom,
+                            above,
+                          });
+                        }
+                        setReciterOpen((o) => !o);
+                      }}
+                      className="flex items-center gap-1 rounded-full border border-white/15 bg-black/60 px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none cursor-pointer whitespace-nowrap"
+                      aria-label="Select reciter"
+                      aria-expanded={reciterOpen}
+                    >
+                      {RECITERS.find((r) => r.id === reciterId)?.label ?? "Reciter"}
+                      <svg width="8" height="5" viewBox="0 0 8 5" fill="none" className={`transition-transform duration-150 ${reciterOpen ? "rotate-180" : ""}`} aria-hidden="true">
+                        <path d="M1 1L4 4L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+
+                    {reciterOpen && dropPos && typeof window !== "undefined" && createPortal(
+                      <>
+                        <div className="fixed inset-0 z-[190]" onClick={() => setReciterOpen(false)} />
+                        <div
+                          className="fixed z-[191] rounded-xl border border-white/10 bg-[#06070f] shadow-2xl py-1 overflow-y-auto"
+                          style={(() => {
+                            const MAX_W = 260;
+                            const MARGIN = 12;
+                            const ideal = dropPos.right - MAX_W;
+                            const left = Math.max(MARGIN, Math.min(ideal, window.innerWidth - MAX_W - MARGIN));
+                            return {
+                              left,
+                              maxWidth: MAX_W,
+                              maxHeight: "min(260px, 48vh)",
+                              backdropFilter: "blur(24px)",
+                              WebkitBackdropFilter: "blur(24px)",
+                              ...(dropPos.above
+                                ? { bottom: window.innerHeight - dropPos.y + 6 }
+                                : { top: dropPos.y + 6 }),
+                            };
+                          })()}
+                        >
+                          {RECITERS.map((r) => (
+                            <button
+                              key={r.id}
+                              onClick={() => { setReciterId(r.id); setReciterOpen(false); }}
+                              className={`w-full text-left px-4 py-2.5 text-[11px] font-serif-fine whitespace-nowrap transition-colors ${
+                                r.id === reciterId
+                                  ? "text-[#ffd700] bg-white/5"
+                                  : "text-white/60 hover:text-white hover:bg-white/[0.06]"
+                              }`}
+                            >
+                              {r.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>,
+                      document.body
+                    )}
+
+                    <button
+                      onClick={() => {
+                        const next = !repeatRef.current;
+                        repeatRef.current = next;
+                        setRepeatActive(next);
+                      }}
+                      disabled={!audioUrl}
+                      className={`flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-serif-fine uppercase tracking-[0.15em] transition-colors disabled:opacity-40 ${
+                        repeatActive
+                          ? "border-[#ffd700]/50 text-[#ffd700]"
+                          : "border-white/15 text-white/45 hover:text-white/80 hover:border-white/35"
+                      }`}
+                      aria-label={repeatActive ? "Repeat on, tap to turn off" : "Repeat off, tap to loop this verse"}
+                      title={repeatActive ? "Repeating this verse" : "Repeat this verse"}
+                    >
+                      <Repeat className="h-3 w-3" />
+                      {repeatActive ? "Looping" : "Repeat"}
+                    </button>
+
+                    {!autoActive ? (
+                      <button
+                        onClick={handleStartAutoPlay}
+                        disabled={!audioUrl}
+                        className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-white/50 hover:text-white/80 transition-colors disabled:opacity-30"
+                      >
+                        <Volume2 className="h-3 w-3" /> Continue
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleStopAutoPlay}
+                        className="flex items-center gap-1 rounded-full border border-[#ffd700]/30 bg-[#ffd700]/[0.04] px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-[#ffd700]/80 hover:text-[#ffd700] hover:border-[#ffd700]/60 transition-colors"
+                      >
+                        <StopCircle className="h-3 w-3" /> Stop
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {reflection && (
+                  <div className="mb-6 rounded-xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-white/[0.01] p-5">
+                    <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">
+                      For what you carried here
+                    </div>
+                    <p className="font-serif-fine text-white/90 text-sm md:text-base leading-relaxed break-words">{reflection}</p>
+                  </div>
+                )}
+
+                <div className="mt-2 border-t border-white/10 pt-6 space-y-5">
+                  {autoActive ? (
+                    <p className="font-serif-fine text-[10px] uppercase tracking-[0.2em] text-white/25 text-center">
+                      Analysis available when recitation stops
+                    </p>
+                  ) : (
+                    <>
+                      {!contextRequested && !loadingContext && !context && (
+                        <button
+                          onClick={() => setContextRequested(true)}
+                          className="group w-full flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-5 py-3.5 font-serif-fine text-[11px] uppercase tracking-[0.22em] text-white/65 hover:text-white transition-colors"
+                        >
+                          <Sparkles className="h-3.5 w-3.5 text-white/55 group-hover:text-white" />
+                          Reveal AI analysis
+                        </button>
+                      )}
+                      {loadingContext && (
+                        <div className="space-y-3 animate-pulse">
+                          <div className="h-2 w-24 rounded bg-white/10" />
+                          <div className="h-3 w-full rounded bg-white/[0.07]" />
+                          <div className="h-3 w-5/6 rounded bg-white/[0.07]" />
+                          <div className="h-3 w-4/6 rounded bg-white/[0.07]" />
+                        </div>
+                      )}
+                      {!loadingContext && sections.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                          className="space-y-4"
+                        >
+                          {sections.filter((s) => s.key === "SCENE" || s.key === "MEANING" || s.key === "HITS").map(({ key, label, body }) => (
+                            <div key={key}>
+                              <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-1.5">{label}</div>
+                              <p className="font-serif-fine text-white/85 text-sm md:text-base leading-relaxed break-words">{body}</p>
+                            </div>
+                          ))}
+                          {sections.find((s) => s.key === "REFLECT") && (
+                            <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.03] p-5">
+                              <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">Reflect</div>
+                              <p className="font-serif-fine italic text-white text-base md:text-lg leading-relaxed break-words">
+                                {sections.find((s) => s.key === "REFLECT")!.body}
+                              </p>
+                            </div>
+                          )}
+                          {nextSection && (
+                            <div className="mt-4">
+                              <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-2">Read next</div>
+                              {nextVerse ? (
+                                <button
+                                  onClick={() => onNavigate(nextVerse)}
+                                  className="group flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/25 px-4 py-3 text-left transition-colors"
+                                >
+                                  <div>
+                                    <div className="font-serif-fine text-xs uppercase tracking-[0.18em] text-white/50">
+                                      {nextVerse.surahName} \u00b7 {nextVerse.ayah}
+                                    </div>
+                                    <div className="font-serif-fine text-sm text-white/80 mt-1 leading-snug">{nextRef?.reason}</div>
+                                  </div>
+                                  <ArrowRight className="h-4 w-4 text-white/40 group-hover:text-white/90 group-hover:translate-x-0.5 transition-all" />
+                                </button>
+                              ) : (
+                                <p className="font-serif-fine text-white/70 text-sm leading-relaxed break-words">{nextSection.body}</p>
+                              )}
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                      {contextRequested && !loadingContext && !context && (
+                        <div className="rounded-xl border border-white/8 bg-white/[0.02] px-5 py-4 text-center">
+                          <p className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">AI commentary is paused</p>
+                          <p className="font-serif-fine italic text-white/65 text-[13px] leading-relaxed break-words">
+                            We&apos;re between API top-ups. The verse, translation, recitation, and the rest of the app work as normal. The verse itself is more than enough - sit with it.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {autoStatus && (
+                  <p className="mt-4 font-serif-fine text-[10px] italic text-white/40 animate-pulse text-center">{autoStatus}</p>
+                )}
+              </motion.div>
+
+              <div className="absolute right-4 top-4 z-50 flex items-center gap-1">
                 <button
                   onClick={() => setDensity(compact ? "comfortable" : "compact")}
                   className="rounded-full px-2.5 py-1.5 font-serif-fine text-[10px] uppercase tracking-[0.18em] text-white/40 hover:text-white hover:bg-white/10 transition-colors"
@@ -614,289 +902,25 @@ export function VerseCard({
                 </button>
               </div>
 
-              {isDaily && (
-                <div className="mb-5 flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 w-fit">
-                  <Sparkles className="h-3 w-3 text-white/60" />
-                  <span className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/70">
-                    Something found you today
-                  </span>
-                </div>
+              {prevInSurah && (
+                <button
+                  onClick={goPrev}
+                  aria-label="Previous verse in surah"
+                  className="absolute left-1 top-1/2 -translate-y-1/2 z-40 flex h-20 w-10 items-center justify-center rounded-full bg-white/5 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
               )}
-
-              <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:pr-24">
-                {showNav && (
-                  <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-1.5 py-1 w-fit">
-                    <button
-                      onClick={onBack}
-                      disabled={!canGoBack}
-                      className="flex h-6 w-6 items-center justify-center rounded-full text-white/55 transition-colors hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white/55"
-                      aria-label="Previous verse"
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5" />
-                    </button>
-                    <span className="font-mono text-[10px] tabular-nums text-white/50 min-w-[2.6rem] text-center">
-                      {position ?? 1} of {total ?? 1}
-                    </span>
-                    <button
-                      onClick={onForward}
-                      disabled={!canGoForward}
-                      className="flex h-6 w-6 items-center justify-center rounded-full text-white/55 transition-colors hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white/55"
-                      aria-label="Next verse"
-                    >
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-                <div className="font-serif-fine text-xs uppercase tracking-[0.25em] text-white/50">
-                  {currentVerse.surahName} · {currentVerse.ayah}
-                </div>
-              </div>
-
-              <div style={{ opacity: textVisible ? 1 : 0, transition: "opacity 80ms ease" }}>
-                <div className="min-h-[7rem] mb-6">
-                  {bismillahWords && (
-                    <div className="mb-4">
-                      <p
-                        dir="rtl"
-                        lang="ar"
-                        className="arabic text-center text-[clamp(1rem,2.2vw,1.4rem)] text-white/38 leading-[2] tracking-normal break-words"
-                        style={{ wordSpacing: "0.15em" }}
-                      >
-                        {bismillahWords.join(" ")}
-                      </p>
-                      <div className="mt-3 border-t border-white/10" />
-                    </div>
-                  )}
-                  <p
-                    dir="rtl"
-                    lang="ar"
-                    className="arabic text-right text-[clamp(1.4rem,3.2vw,2.25rem)] text-white leading-[2.1] tracking-normal break-words"
-                    style={{ wordSpacing: "0.15em" }}
-                  >
-                    {words.map((w, i) => (
-                      <span
-                        key={i}
-                        className={
-                          i === currentWord
-                            ? "text-[#ffd700] [text-shadow:0_0_18px_rgba(255,215,0,0.85),0_0_4px_rgba(255,215,0,0.95)] transition-[color,text-shadow] duration-150"
-                            : "text-white transition-[color,text-shadow] duration-300"
-                        }
-                      >
-                        {w}{i < words.length - 1 ? " " : ""}
-                      </span>
-                    ))}
-                  </p>
-                </div>
-                <div className="min-h-[3rem] mb-4">
-                  <p className="font-serif-fine italic text-white/55 text-sm md:text-base leading-relaxed break-words">
-                    {currentVerse.transliteration}
-                  </p>
-                </div>
-                <div className="min-h-[4.5rem] mb-5">
-                  <p className="font-serif-fine text-white/90 text-base md:text-lg leading-relaxed break-words">
-                    {currentVerse.translation}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                  <button
-                    ref={reciterBtnRef}
-                    onClick={() => {
-                      const btn = reciterBtnRef.current;
-                      if (btn) {
-                        const r = btn.getBoundingClientRect();
-                        const above = r.top > window.innerHeight / 2;
-                        setDropPos({
-                          left: r.left,
-                          right: r.right,
-                          y: above ? r.top : r.bottom,
-                          above,
-                        });
-                      }
-                      setReciterOpen((o) => !o);
-                    }}
-                    className="flex items-center gap-1 rounded-full border border-white/15 bg-black/60 px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-white/55 hover:text-white hover:border-white/40 transition-colors outline-none cursor-pointer whitespace-nowrap"
-                    aria-label="Select reciter"
-                    aria-expanded={reciterOpen}
-                  >
-                    {RECITERS.find((r) => r.id === reciterId)?.label ?? "Reciter"}
-                    <svg width="8" height="5" viewBox="0 0 8 5" fill="none" className={`transition-transform duration-150 ${reciterOpen ? "rotate-180" : ""}`} aria-hidden="true">
-                      <path d="M1 1L4 4L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </button>
-
-                  {reciterOpen && dropPos && typeof window !== "undefined" && createPortal(
-                    <>
-                      <div className="fixed inset-0 z-[190]" onClick={() => setReciterOpen(false)} />
-                      <div
-                        className="fixed z-[191] rounded-xl border border-white/10 bg-[#06070f] shadow-2xl py-1 overflow-y-auto"
-                        style={(() => {
-                          const MAX_W = 260;
-                          const MARGIN = 12;
-                          const ideal = dropPos.right - MAX_W;
-                          const left = Math.max(MARGIN, Math.min(ideal, window.innerWidth - MAX_W - MARGIN));
-                          return {
-                            left,
-                            maxWidth: MAX_W,
-                            maxHeight: "min(260px, 48vh)",
-                            backdropFilter: "blur(24px)",
-                            WebkitBackdropFilter: "blur(24px)",
-                            ...(dropPos.above
-                              ? { bottom: window.innerHeight - dropPos.y + 6 }
-                              : { top: dropPos.y + 6 }),
-                          };
-                        })()}
-                      >
-                        {RECITERS.map((r) => (
-                          <button
-                            key={r.id}
-                            onClick={() => { setReciterId(r.id); setReciterOpen(false); }}
-                            className={`w-full text-left px-4 py-2.5 text-[11px] font-serif-fine whitespace-nowrap transition-colors ${
-                              r.id === reciterId
-                                ? "text-[#ffd700] bg-white/5"
-                                : "text-white/60 hover:text-white hover:bg-white/[0.06]"
-                            }`}
-                          >
-                            {r.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>,
-                    document.body
-                  )}
-
-                  <button
-                    onClick={() => {
-                      const next = !repeatRef.current;
-                      repeatRef.current = next;
-                      setRepeatActive(next);
-                    }}
-                    disabled={!audioUrl}
-                    className={`flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-serif-fine uppercase tracking-[0.15em] transition-colors disabled:opacity-40 ${
-                      repeatActive
-                        ? "border-[#ffd700]/50 text-[#ffd700]"
-                        : "border-white/15 text-white/45 hover:text-white/80 hover:border-white/35"
-                    }`}
-                    aria-label={repeatActive ? "Repeat on, tap to turn off" : "Repeat off, tap to loop this verse"}
-                    title={repeatActive ? "Repeating this verse" : "Repeat this verse"}
-                  >
-                    <Repeat className="h-3 w-3" />
-                    {repeatActive ? "Looping" : "Repeat"}
-                  </button>
-
-                  {!autoActive ? (
-                    <button
-                      onClick={handleStartAutoPlay}
-                      disabled={!audioUrl}
-                      className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-white/50 hover:text-white/80 transition-colors disabled:opacity-30"
-                    >
-                      <Volume2 className="h-3 w-3" /> Continue
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleStopAutoPlay}
-                      className="flex items-center gap-1 rounded-full border border-[#ffd700]/30 bg-[#ffd700]/[0.04] px-2 py-1 text-[10px] uppercase tracking-[0.15em] font-serif-fine text-[#ffd700]/80 hover:text-[#ffd700] hover:border-[#ffd700]/60 transition-colors"
-                    >
-                      <StopCircle className="h-3 w-3" /> Stop
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {reflection && (
-                <div className="mb-6 rounded-xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-white/[0.01] p-5">
-                  <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">
-                    For what you carried here
-                  </div>
-                  <p className="font-serif-fine text-white/90 text-sm md:text-base leading-relaxed break-words">{reflection}</p>
-                </div>
+              {nextInSurah && (
+                <button
+                  onClick={goNext}
+                  aria-label="Next verse in surah"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 z-40 flex h-20 w-10 items-center justify-center rounded-full bg-white/5 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </button>
               )}
-
-              <div className="mt-2 border-t border-white/10 pt-6 space-y-5">
-                {autoActive ? (
-                  <p className="font-serif-fine text-[10px] uppercase tracking-[0.2em] text-white/25 text-center">
-                    Analysis available when recitation stops
-                  </p>
-                ) : (
-                  <>
-                    {!contextRequested && !loadingContext && !context && (
-                      <button
-                        onClick={() => setContextRequested(true)}
-                        className="group w-full flex items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/30 px-5 py-3.5 font-serif-fine text-[11px] uppercase tracking-[0.22em] text-white/65 hover:text-white transition-colors"
-                      >
-                        <Sparkles className="h-3.5 w-3.5 text-white/55 group-hover:text-white" />
-                        Reveal AI analysis
-                      </button>
-                    )}
-                    {loadingContext && (
-                      <div className="space-y-3 animate-pulse">
-                        <div className="h-2 w-24 rounded bg-white/10" />
-                        <div className="h-3 w-full rounded bg-white/[0.07]" />
-                        <div className="h-3 w-5/6 rounded bg-white/[0.07]" />
-                        <div className="h-3 w-4/6 rounded bg-white/[0.07]" />
-                      </div>
-                    )}
-                    {!loadingContext && sections.length > 0 && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                        className="space-y-4"
-                      >
-                        {sections.filter((s) => s.key === "SCENE" || s.key === "MEANING" || s.key === "HITS").map(({ key, label, body }) => (
-                          <div key={key}>
-                            <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-1.5">{label}</div>
-                            <p className="font-serif-fine text-white/85 text-sm md:text-base leading-relaxed break-words">{body}</p>
-                          </div>
-                        ))}
-                        {sections.find((s) => s.key === "REFLECT") && (
-                          <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.03] p-5">
-                            <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">Reflect</div>
-                            <p className="font-serif-fine italic text-white text-base md:text-lg leading-relaxed break-words">
-                              {sections.find((s) => s.key === "REFLECT")!.body}
-                            </p>
-                          </div>
-                        )}
-                        {nextSection && (
-                          <div className="mt-4">
-                            <div className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/40 mb-2">Read next</div>
-                            {nextVerse ? (
-                              <button
-                                onClick={() => onJumpToVerse(nextVerse)}
-                                className="group flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/25 px-4 py-3 text-left transition-colors"
-                              >
-                                <div>
-                                  <div className="font-serif-fine text-xs uppercase tracking-[0.18em] text-white/50">
-                                    {nextVerse.surahName} · {nextVerse.ayah}
-                                  </div>
-                                  <div className="font-serif-fine text-sm text-white/80 mt-1 leading-snug">{nextRef?.reason}</div>
-                                </div>
-                                <ArrowRight className="h-4 w-4 text-white/40 group-hover:text-white/90 group-hover:translate-x-0.5 transition-all" />
-                              </button>
-                            ) : (
-                              <p className="font-serif-fine text-white/70 text-sm leading-relaxed break-words">{nextSection.body}</p>
-                            )}
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-                    {contextRequested && !loadingContext && !context && (
-                      <div className="rounded-xl border border-white/8 bg-white/[0.02] px-5 py-4 text-center">
-                        <p className="font-serif-fine text-[10px] uppercase tracking-[0.22em] text-white/45 mb-2">AI commentary is paused</p>
-                        <p className="font-serif-fine italic text-white/65 text-[13px] leading-relaxed break-words">
-                          We&apos;re between API top-ups. The verse, translation, recitation, and the rest of the app work as normal. The verse itself is more than enough - sit with it.
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {autoStatus && (
-                <p className="mt-4 font-serif-fine text-[10px] italic text-white/40 animate-pulse text-center">{autoStatus}</p>
-              )}
-
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
