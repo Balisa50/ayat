@@ -635,7 +635,7 @@ export function VerseCard({
 
                 <div className="mb-6 flex flex-col gap-2">
                   <div className="font-serif-fine text-xs uppercase tracking-[0.25em] text-white/50 whitespace-nowrap">
-                    {currentVerse.surahName} \u00b7 {positionInSurah} of {surahLength}
+                    {currentVerse.surahName} · {positionInSurah} of {surahLength}
                   </div>
                 </div>
 
@@ -854,7 +854,7 @@ export function VerseCard({
                                 >
                                   <div>
                                     <div className="font-serif-fine text-xs uppercase tracking-[0.18em] text-white/50">
-                                      {nextVerse.surahName} \u00b7 {nextVerse.ayah}
+                                      {nextVerse.surahName} · {nextVerse.ayah}
                                     </div>
                                     <div className="font-serif-fine text-sm text-white/80 mt-1 leading-snug">{nextRef?.reason}</div>
                                   </div>
@@ -906,7 +906,7 @@ export function VerseCard({
                 <button
                   onClick={goPrev}
                   aria-label="Previous verse in surah"
-                  className="absolute left-1 top-1/2 -translate-y-1/2 z-40 flex h-20 w-10 items-center justify-center rounded-full bg-white/5 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
+                  className="absolute left-0 top-[15%] bottom-[15%] w-[18%] z-40 opacity-0 cursor-pointer"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
@@ -915,7 +915,7 @@ export function VerseCard({
                 <button
                   onClick={goNext}
                   aria-label="Next verse in surah"
-                  className="absolute right-1 top-1/2 -translate-y-1/2 z-40 flex h-20 w-10 items-center justify-center rounded-full bg-white/5 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
+                  className="absolute right-0 top-[15%] bottom-[15%] w-[18%] z-40 opacity-0 cursor-pointer"
                 >
                   <ChevronRight className="h-5 w-5" />
                 </button>
