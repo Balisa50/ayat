@@ -609,12 +609,12 @@ export function VerseCard({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-30 flex items-center justify-center px-4 py-8 pointer-events-none"
+            className="fixed inset-0 z-30 flex items-start justify-center px-4 pt-[8vh] pb-4 pointer-events-none"
           >
             <div className="relative w-full max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl pointer-events-auto">
               <motion.div
                 layout="size"
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ layout: { duration: 0.5, ease: [0.22, 1, 0.36, 1] }, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                 initial={{ opacity: 0, y: 24, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 16, scale: 0.98 }}
@@ -635,7 +635,7 @@ export function VerseCard({
 
                 <div className="mb-6 flex flex-col gap-2">
                   <div className="font-serif-fine text-xs uppercase tracking-[0.25em] text-white/50 whitespace-nowrap">
-                    {currentVerse.surahName} · {positionInSurah} of {surahLength}
+                    {prevInSurah ? "‹ " : ""}{currentVerse.surahName} · {positionInSurah} of {surahLength}{nextInSurah ? " ›" : ""}
                   </div>
                 </div>
 
